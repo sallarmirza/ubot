@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Channel Desk</title>
+	<style>
+		:root {
+			color-scheme: light;
+			font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+			color: #202b2d;
+			background: #f3f6f4;
+			font-synthesis: none;
+		}
+		* { box-sizing: border-box; }
+		body { margin: 0; min-height: 100vh; }
+		header {
+			height: 64px;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 0 clamp(20px, 5vw, 72px);
+			background: #fff;
+			border-bottom: 1px solid #e3e9e5;
+		}
+		.brand { font-size: 17px; font-weight: 700; letter-spacing: 0; }
+		.brand-mark { color: #16805e; margin-right: 9px; }
+		button {
+			min-height: 40px;
+			padding: 0 16px;
+			border: 0;
+			border-radius: 5px;
+			background: #176b52;
+			color: #fff;
+			font: inherit;
+			font-size: 14px;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		button:hover { background: #105640; }
+		button:focus-visible { outline: 3px solid #90cbb2; outline-offset: 2px; }
+		button.secondary { background: transparent; color: #42524d; }
+		button.secondary:hover { background: #edf2ef; }
+		main { width: min(880px, calc(100% - 40px)); margin: 58px auto; }
+		.eyebrow { color: #58756a; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+		h1 { margin: 10px 0 8px; font-size: clamp(28px, 5vw, 38px); font-weight: 650; }
+		.intro { margin: 0; color: #60706a; line-height: 1.6; }
+		.section-heading {
+			display: flex;
+			align-items: baseline;
+			justify-content: space-between;
+			gap: 16px;
+			margin: 42px 0 12px;
+			border-bottom: 1px solid #dce5df;
+			padding-bottom: 12px;
+		}
+		h2 { margin: 0; font-size: 17px; }
+		#channel-count { color: #708079; font-size: 13px; }
+		#status { color: #61716a; font-size: 14px; padding: 20px 0; }
+		#channels { list-style: none; padding: 0; margin: 0; }
+		.channel {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: 8px 20px;
+			padding: 19px 0;
+			border-bottom: 1px solid #e1e8e3;
+			animation: arrive 300ms ease both;
+		}
+		.channel-name { min-width: 0; overflow-wrap: anywhere; font-weight: 650; }
+		.channel-id { color: #77857f; font-size: 12px; }
+		.stats { grid-column: 1 / -1; display: flex; gap: 24px; color: #52645c; font-size: 13px; }
+		.stats strong { color: #263b32; font-weight: 650; }
+		[hidden] { display: none !important; }
+		@keyframes arrive { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+		@media (max-width: 520px) {
+			header { padding: 0 18px; }
+			main { margin: 38px auto; }
+			.channel { grid-template-columns: 1fr; }
+			.stats { gap: 16px; flex-wrap: wrap; }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			*, *::before, *::after { animation-duration: 0.01ms !important; }
+		}
+	</style>
+</head>
+<body>
+	<header>
+		<div class="brand"><span class="brand-mark" aria-hidden="true">●</span>Channel Desk</div>
+		<button id="login-button" type="button" hidden>Connect with Google</button>
+		<button id="logout-button" class="secondary" type="button" hidden>Sign out</button>
+	</header>
+	<main>
+		<div class="eyebrow">YouTube workspace</div>
+		<h1>Your channels</h1>
+		<p class="intro">Connect your Google account to see the YouTube channels it manages.</p>
+		<div class="section-heading">
+			<h2>Connected channels</h2>
+			<span id="channel-count"></span>
+		</div>
+		<p id="status" role="status" aria-live="polite">Checking your sign-in…</p>
+		<ul id="channels" aria-label="YouTube channels"></ul>
+	</main>
+	<script>
+		const loginButton = document.querySelector("#login-button");
+		const logoutButton = document.querySelector("#logout-button");
+		const status = document.querySelector("#status");
+		const channelList = document.querySelector("#channels");
+		const channelCount = document.querySelector("#channel-count");
+
+		function addStat(container, label, value) {
+			const item = document.createElement("span");
+			const amount = document.createElement("strong");
+			amount.textContent = Number(value || 0).toLocaleString();
+			item.append(amount, ` ${label}`);
+			container.append(item);
+		}
+
+		function showChannels(channels) {
+			channelList.replaceChildren();
+			channelCount.textContent = `${channels.length} ${channels.length === 1 ? "channel" : "channels"}`;
+			if (!channels.length) {
+				status.textContent = "No YouTube channels were found on this account.";
+				return;
+			}
+			status.hidden = true;
+			channels.forEach((channel, index) => {
+				const row = document.createElement("li");
+				row.className = "channel";
+				row.style.animationDelay = `${index * 45}ms`;
+				const name = document.createElement("div");
+				name.className = "channel-name";
+				name.textContent = channel.channel_name;
+				const id = document.createElement("div");
+				id.className = "channel-id";
+				id.textContent = channel.youtube_channel_id;
+				const stats = document.createElement("div");
+				stats.className = "stats";
+				addStat(stats, "subscribers", channel.channel_subscribers);
+				addStat(stats, "views", channel.channel_views);
+				row.append(name, id, stats);
+				channelList.append(row);
+			});
+		}
+
+		async function loadChannels() {
+			const params = new URLSearchParams(location.search);
+			if (params.has("error")) {
+				const messages = {
+					provider_denied: "Google sign-in was cancelled or rejected.",
+					missing_code: "Google did not return an authorization code.",
+					missing_state: "The sign-in response did not include a state value. Start again from this page.",
+					state_cookie_missing: "The sign-in cookie was not returned. Open this page and sign in using the same hostname (localhost or 127.0.0.1).",
+					state_mismatch: "The sign-in state did not match. Start a fresh sign-in from this page.",
+					token_exchange: "Google rejected the authorization code. Check the OAuth client secret and redirect URI, then retry.",
+					channel_fetch: "Google sign-in worked, but YouTube channel access failed. Check YouTube Data API access and consent.",
+					no_youtube_channel: "This Google account does not have a YouTube channel to connect."
+				};
+				status.textContent = messages[params.get("reason")] || "Google sign-in was unsuccessful. Please try again.";
+				loginButton.hidden = false;
+				return;
+			}
+			try {
+				const userResponse = await fetch("/auth/me", { credentials: "same-origin" });
+				if (!userResponse.ok) {
+					status.textContent = "Connect your Google account to get started.";
+					loginButton.hidden = false;
+					return;
+				}
+				logoutButton.hidden = false;
+				const response = await fetch("/auth/channels", { credentials: "same-origin" });
+				if (!response.ok) throw new Error("Could not load your channels.");
+				showChannels(await response.json());
+			} catch (error) {
+				status.textContent = error.message || "Could not connect to the server.";
+				loginButton.hidden = false;
+			}
+		}
+
+		loginButton.addEventListener("click", () => { location.href = "/auth/google/login"; });
+		logoutButton.addEventListener("click", async () => {
+			await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+			location.reload();
+		});
+		loadChannels();
+	</script>
+</body>
+</html>

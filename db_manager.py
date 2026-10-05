@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db_model import Base
+from sqlalchemy.orm import declarative_base
 
+Base = declarative_base()
 load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
