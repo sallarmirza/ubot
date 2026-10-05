@@ -43,21 +43,34 @@ def google_callback(
     db: Session = Depends(db_manager.get_db),
 ):
     """Google sends the user back here: verify state, save tokens, set the JWT cookie."""
-    failed = RedirectResponse(f"{settings.FRONTEND_URL}/login?error=oauth_failed")
+    frontend_page = settings.FRONTEND_URL or f"{str(request.base_url).rstrip('/')}/test/test.html"
+    def failed(reason: str) -> RedirectResponse:
+        return RedirectResponse(f"{frontend_page}?error=oauth_failed&reason={reason}")
 
-    # Reject if the user denied access, or the state doesn't match our cookie
     saved_state = request.cookies.get(STATE_COOKIE)
-    if error or not code or not state or state != saved_state:
-        return failed
+    if error:
+        return failed("provider_denied")
+    if not code:
+        return failed("missing_code")
+    if not state:
+        return failed("missing_state")
+    if not saved_state:
+        return failed("state_cookie_missing")
+    if not secrets.compare_digest(state, saved_state):
+        return failed("state_mismatch")
 
     try:
         user_id = auth_service.login_with_google(db, code)
-    except GoogleOAuthError:
+    except GoogleOAuthError as exc:
         db.rollback()
-        return failed
+        if str(exc).startswith("Token Exchange failed:"):
+            return failed("token_exchange")
+        if str(exc).startswith("Fetching channels failed:"):
+            return failed("channel_fetch")
+        return failed("no_youtube_channel")
 
     # Success: set the JWT on the same response we return, and clear the temporary state cookie
-    response = RedirectResponse(f"{settings.FRONTEND_URL}/dashboard")
+    response = RedirectResponse(frontend_page)
     set_auth_cookie(response, create_access_token(user_id))
     response.delete_cookie(STATE_COOKIE)
     return response
@@ -66,6 +79,19 @@ def google_callback(
 def me(user: User = Depends(get_current_user)):
     """Front calls this on page load to check if the user is logged in."""
     return {"user_id": user.user_id}
+
+@router.get("/channels")
+def channels(user: User = Depends(get_current_user)):
+    """Return the signed-in user's saved YouTube channels."""
+    return [
+        {
+            "youtube_channel_id": channel.youtube_channel_id,
+            "channel_name": channel.channel_name,
+            "channel_subscribers": channel.channel_subscribers,
+            "channel_views": channel.channel_views,
+        }
+        for channel in user.youtube_channels
+    ]
 
 @router.post("/logout")
 def logout(response: Response):

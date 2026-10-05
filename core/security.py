@@ -1,6 +1,4 @@
-# core/security.py
-# JWT + cookie helpers. No DB and no FastAPI routing here, just:
-#   create token -> put in cookie -> read token back -> clear cookie
+
 from datetime import datetime, timedelta, timezone
 
 import jwt
