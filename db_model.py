@@ -6,9 +6,11 @@ from sqlalchemy import (
 )
 Base = declarative_base()
 
-class users(Base):
+class User(Base):
     __tablename__ = 'users'
     user_id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
 
 class youtubechannel (Base):
@@ -59,7 +61,7 @@ class selected_video (Base):
     __tablename__ = 'selected_video'
     selected_video_id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
-    channel_id = Column(Integer, ForeignKey('youtubechannel.youtubechannel_id'), nullable=False)
+    channel_id = Column(Integer, ForeignKey('youtubechannel.channel_id'), nullable=False)
     video_id = Column(Integer, ForeignKey('videos.video_id'), nullable=False)
     likes = Column(Integer, nullable=False, default=0)
     comments = Column(Integer, nullable=False, default=0)
