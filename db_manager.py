@@ -2,13 +2,13 @@
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
+
+from db_model import Base
 
 load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
-
-Base = declarative_base()
 
 
 class DBManager:
@@ -20,7 +20,6 @@ class DBManager:
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
 
     def create_tables(self):
-  # noqa: F401
         Base.metadata.create_all(bind=self.engine)
 
     def drop_tables(self):
