@@ -9,6 +9,9 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 SCOPES = [
+    "openid",
+    "email",
+    "profile",
     "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]

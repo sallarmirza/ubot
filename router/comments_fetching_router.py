@@ -1,6 +1,6 @@
+from fastapi import Query
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from fastapi import Query
 
 from core.dependencies import get_current_user
 from db_manager import db_manager

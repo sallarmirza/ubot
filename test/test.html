@@ -98,6 +98,8 @@
 		.comment-date { margin-left: 8px; color: #77857f; font-size: 12px; }
 		.comment-text { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.comment-likes { color: #60706a; font-size: 12px; }
+		.ai-draft { padding: 10px; background: #f1f6f3; border-radius: 5px; white-space: pre-wrap; }
+		.comment-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 		.channel-select { grid-column: 1 / -1; justify-self: start; }
 		#business-profile {
 			margin-top: 32px;
@@ -183,7 +185,10 @@
 			<p id="video-status" role="status" aria-live="polite"></p>
 			<ul id="video-list" class="video-list"></ul>
 			<div id="comments-panel" hidden>
-				<h3 id="comments-heading">Video comments</h3>
+				<div class="section-heading">
+					<h3 id="comments-heading">Video comments</h3>
+					<button id="generate-replies" type="button">Generate reply drafts</button>
+				</div>
 				<p id="comments-status" role="status" aria-live="polite"></p>
 				<ul id="comments-list" class="comment-list"></ul>
 			</div>
@@ -209,9 +214,14 @@
 		const commentsHeading = document.querySelector("#comments-heading");
 		const commentsStatus = document.querySelector("#comments-status");
 		const commentsList = document.querySelector("#comments-list");
+		const generateRepliesButton = document.querySelector("#generate-replies");
 		let selectedChannel = null;
 		let videoChannel = null;
+		let activeCommentVideo = null;
+		let currentComments = [];
 		let channelVideos = [];
+		let draftOffset = 0;
+		let hasMoreDrafts = false;
 
 		function addStat(container, label, value) {
 			const item = document.createElement("span");
@@ -329,6 +339,46 @@
 				likes.className = "comment-likes";
 				likes.textContent = `${Number(comment.like_count || 0).toLocaleString()} likes`;
 				item.append(heading, text, likes);
+				if (comment.ai_reply) {
+					const draft = document.createElement("p");
+					draft.className = "ai-draft";
+					draft.textContent = `AI draft: ${comment.ai_reply}`;
+					item.append(draft);
+				}
+				if (comment.error) {
+					const error = document.createElement("p");
+					error.className = "comment-likes";
+					error.textContent = `Draft error: ${comment.error}`;
+					item.append(error);
+				}
+				if (!isReply && (comment.ai_reply || comment.error) && !comment.is_replied) {
+					const actions = document.createElement("div");
+					actions.className = "comment-actions";
+					if (!["posting", "unknown"].includes(comment.reply_status)) {
+						const regenerateButton = document.createElement("button");
+						regenerateButton.type = "button";
+						regenerateButton.textContent = comment.ai_reply ? "Regenerate draft" : "Generate draft";
+						regenerateButton.addEventListener("click", () => regenerateCommentReply(comment, regenerateButton));
+						const postButton = document.createElement("button");
+						postButton.type = "button";
+						postButton.textContent = "Post reply";
+						postButton.addEventListener("click", () => postCommentReply(comment, postButton));
+						actions.append(regenerateButton, postButton);
+					} else {
+						const state = document.createElement("div");
+						state.className = "comment-likes";
+						state.textContent = comment.reply_status === "posting"
+							? "Reply posting is in progress."
+							: "Posting outcome is uncertain. Check YouTube before retrying.";
+						actions.append(state);
+					}
+					item.append(actions);
+				} else if (!isReply && comment.is_replied) {
+					const posted = document.createElement("div");
+					posted.className = "comment-likes";
+					posted.textContent = "Reply posted";
+					item.append(posted);
+				}
 				const replies = comment.replies || [];
 				if (replies.length) {
 					const replyList = document.createElement("ul");
@@ -342,10 +392,14 @@
 
 		async function loadVideoComments(video) {
 			if (!videoChannel) return;
+			draftOffset = 0;
+			hasMoreDrafts = false;
+			activeCommentVideo = video;
 			commentsPanel.hidden = false;
 			commentsHeading.textContent = `Comments: ${video.title}`;
 			commentsStatus.textContent = "Loading comments and replies…";
 			commentsList.replaceChildren();
+			generateRepliesButton.disabled = true;
 			try {
 				const response = await fetch(
 					`/comments/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(video.youtube_video_id)}`,
@@ -355,19 +409,116 @@
 					const result = await response.json().catch(() => ({}));
 					throw new Error(result.detail || `Comments request failed (${response.status}).`);
 				}
-				const comments = await response.json();
-				renderComments(comments);
-				const total = comments.reduce(
+				currentComments = await response.json();
+				renderComments(currentComments);
+				const total = currentComments.reduce(
 					(count, comment) => count + 1 + (comment.replies || []).length,
 					0
 				);
 				commentsStatus.textContent = total
 					? `${total.toLocaleString()} comments and replies loaded.`
 					: "This video has no comments yet.";
+				generateRepliesButton.disabled = !currentComments.length;
+				hasMoreDrafts = currentComments.length > 0;
+				generateRepliesButton.textContent = "Generate reply drafts";
 			} catch (error) {
 				commentsStatus.textContent = error.message || "Could not load comments.";
 			}
 			commentsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+
+		generateRepliesButton.addEventListener("click", async () => {
+			if (!videoChannel || !activeCommentVideo) return;
+			generateRepliesButton.disabled = true;
+			commentsStatus.textContent = `Generating up to 20 drafts (starting at comment ${draftOffset + 1})…`;
+			try {
+				const response = await fetch(
+					`/ai/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}/generate-replies?offset=${draftOffset}&limit=20`,
+					{ method: "POST", credentials: "same-origin" }
+				);
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Draft generation failed (${response.status}).`);
+				}
+				const batch = await response.json();
+				const draftsById = new Map(batch.results.map((draft) => [draft.youtube_comment_id, draft]));
+				const applyDrafts = (items) => items.map((comment) => {
+					const draft = draftsById.get(comment.youtube_comment_id);
+					return {
+						...comment,
+						...(draft || {}),
+						replies: applyDrafts(comment.replies || [])
+					};
+				});
+				currentComments = await (async () => {
+					const response = await fetch(
+						`/comments/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}`,
+						{ credentials: "same-origin" }
+					);
+					if (!response.ok) throw new Error("Drafts were saved, but comments could not be refreshed.");
+					return response.json();
+				})();
+				currentComments = applyDrafts(currentComments);
+				renderComments(currentComments);
+				const generated = batch.results.filter((draft) => !draft.skipped && !draft.error).length;
+				const errors = batch.results.filter((draft) => draft.error).length;
+				draftOffset = batch.next_offset;
+				hasMoreDrafts = batch.has_more;
+				generateRepliesButton.textContent = hasMoreDrafts ? "Generate next batch (up to 20)" : "All comments processed";
+				commentsStatus.textContent = `${generated} drafts generated${errors ? `; ${errors} errors shown on comments` : ""}.${hasMoreDrafts ? " Generate the next batch to continue." : ""}`;
+			} catch (error) {
+				commentsStatus.textContent = error.message || "Could not generate reply drafts.";
+			} finally {
+				generateRepliesButton.disabled = !hasMoreDrafts;
+			}
+		});
+
+		async function regenerateCommentReply(comment, button) {
+			if (!videoChannel || !activeCommentVideo) return;
+			button.disabled = true;
+			try {
+				const response = await fetch(
+					`/ai/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}/comments/${encodeURIComponent(comment.youtube_comment_id)}/regenerate-reply`,
+					{ method: "POST", credentials: "same-origin" }
+				);
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Draft regeneration failed (${response.status}).`);
+				}
+				Object.assign(comment, await response.json());
+				renderComments(currentComments);
+				commentsStatus.textContent = "Draft regenerated. Review it before posting.";
+			} catch (error) {
+				commentsStatus.textContent = error.message || "Could not regenerate the draft.";
+			} finally {
+				if (button.isConnected) button.disabled = false;
+			}
+		}
+
+		async function postCommentReply(comment, button) {
+			if (!videoChannel || !activeCommentVideo) return;
+			button.disabled = true;
+			commentsStatus.textContent = "Posting approved reply…";
+			try {
+				const response = await fetch(
+					`/ai/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}/comments/${encodeURIComponent(comment.youtube_comment_id)}/post-reply`,
+					{ method: "POST", credentials: "same-origin" }
+				);
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Reply posting failed (${response.status}).`);
+				}
+				const posted = await response.json();
+				comment.is_replied = posted.is_replied;
+				comment.youtube_reply_id = posted.youtube_reply_id;
+				comment.reply_status = posted.reply_status;
+				renderComments(currentComments);
+				commentsStatus.textContent = "Reply posted to YouTube.";
+			} catch (error) {
+				commentsStatus.textContent = error.message || "Could not post reply.";
+			} finally {
+				if (button.isConnected) button.disabled = false;
+			}
 		}
 
 		async function loadChannelVideos(channel) {
@@ -510,7 +661,7 @@
 			};
 
 			try {
-				const response = await fetch("/business-profile", {
+				const response = await fetch("/business-profile/save-business-profile", {
 					method: "POST",
 					credentials: "same-origin",
 					headers: { "Content-Type": "application/json" },
