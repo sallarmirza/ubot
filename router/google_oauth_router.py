@@ -10,7 +10,6 @@ from db_model import User
 from schema.oauth_schema import GoogleOAuthError
 from services import auth_service
 from services import google_oauth_service as google
-# import requests
 
 router=APIRouter(tags=["auth"])
 
@@ -31,7 +30,6 @@ def google_login():
             samesite="lax",
             secure=settings.COOKIE_SECURE,
         )
-                
         return response
     except:
         raise ValueError("Unable to perform action")
@@ -45,18 +43,10 @@ def google_callback(
     db: Session = Depends(db_manager.get_db),
 ):
     """Google sends the user back here: verify state, save tokens, set the JWT cookie."""
-    # TEMP debug: show what the callback request actually carries (remove later)
-    print("HOST:", request.headers.get("host"))
-    print("COOKIE HEADER:", request.headers.get("cookie"))
-    print("URL:", request.url)
-
-    frontend_page = settings.FRONTEND_URL
-
+    frontend_page = settings.FRONTEND_URL or f"{str(request.base_url).rstrip('/')}/test/test.html"
     def failed(reason: str) -> RedirectResponse:
-        # Send the user back to the frontend with an error reason in the query string
         return RedirectResponse(f"{frontend_page}?error=oauth_failed&reason={reason}")
 
-    # Validate the callback request before doing any token work
     saved_state = request.cookies.get(STATE_COOKIE)
     if error:
         return failed("provider_denied")
@@ -69,7 +59,6 @@ def google_callback(
     if not secrets.compare_digest(state, saved_state):
         return failed("state_mismatch")
 
-    # Exchange the code for tokens and save the user and channels
     try:
         user_id = auth_service.login_with_google(db, code)
     except GoogleOAuthError as exc:
@@ -80,12 +69,11 @@ def google_callback(
             return failed("channel_fetch")
         return failed("no_youtube_channel")
 
-    # Success: set the JWT on the returned response and clear the temporary state cookie
+    # Success: set the JWT on the same response we return, and clear the temporary state cookie
     response = RedirectResponse(frontend_page)
     set_auth_cookie(response, create_access_token(user_id))
-    response.delete_cookie(STATE_COOKIE, path="/")
+    response.delete_cookie(STATE_COOKIE)
     return response
-
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
