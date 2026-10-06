@@ -70,6 +70,24 @@
 		.channel-id { color: #77857f; font-size: 12px; }
 		.stats { grid-column: 1 / -1; display: flex; gap: 24px; color: #52645c; font-size: 13px; }
 		.stats strong { color: #263b32; font-weight: 650; }
+		.channel-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+		.video-list { list-style: none; padding: 0; margin: 16px 0; }
+		.video-item { padding: 16px 0; border-bottom: 1px solid #e1e8e3; }
+		.video-item label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; }
+		.video-item input { margin-top: 4px; }
+		.video-title { font-weight: 650; overflow-wrap: anywhere; }
+		.video-description { margin: 6px 0; color: #60706a; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.video-description-input {
+			width: 100%;
+			padding: 10px;
+			border: 1px solid #cbd7d0;
+			border-radius: 5px;
+			font: inherit;
+		}
+		.video-limit { width: 76px; min-height: 40px; padding: 0 8px; border: 1px solid #cbd7d0; border-radius: 5px; font: inherit; }
+		.video-note { color: #60706a; font-size: 13px; line-height: 1.5; }
+		.video-stats { color: #52645c; font-size: 13px; }
+		#video-status { color: #52645c; }
 		.channel-select { grid-column: 1 / -1; justify-self: start; }
 		#business-profile {
 			margin-top: 32px;
@@ -95,6 +113,7 @@
 			main { margin: 38px auto; }
 			.channel { grid-template-columns: 1fr; }
 			.stats { gap: 16px; flex-wrap: wrap; }
+				#business-profile { padding: 18px; }
 		}
 		@media (prefers-reduced-motion: reduce) {
 			*, *::before, *::after { animation-duration: 0.01ms !important; }
@@ -141,6 +160,19 @@
 			</form>
 			<p id="profile-status" role="status" aria-live="polite"></p>
 		</section>
+		<section id="channel-videos" hidden>
+			<div class="section-heading">
+				<h2 id="video-heading">Channel videos</h2>
+				<div class="channel-actions">
+					<label for="video-limit">Fetch limit</label>
+					<input id="video-limit" class="video-limit" type="number" min="1" max="500" step="1" value="5">
+					<button id="save-videos" type="button">Save selected videos</button>
+				</div>
+			</div>
+			<p class="video-note">Descriptions are loaded from YouTube. Edit the text to update it, or add a description when YouTube has none. The full text shown is saved.</p>
+			<p id="video-status" role="status" aria-live="polite"></p>
+			<ul id="video-list" class="video-list"></ul>
+		</section>
 	</main>
 	<script>
 		const loginButton = document.querySelector("#login-button");
@@ -152,7 +184,14 @@
 		const profileForm = document.querySelector("#business-profile-form");
 		const profileStatus = document.querySelector("#profile-status");
 		const selectedChannelText = document.querySelector("#selected-channel");
+		const videosSection = document.querySelector("#channel-videos");
+		const videoHeading = document.querySelector("#video-heading");
+		const videoLimitInput = document.querySelector("#video-limit");
+		const videoStatus = document.querySelector("#video-status");
+		const videoList = document.querySelector("#video-list");
+		const saveVideosButton = document.querySelector("#save-videos");
 		let selectedChannel = null;
+		let channelVideos = [];
 
 		function addStat(container, label, value) {
 			const item = document.createElement("span");
@@ -184,15 +223,152 @@
 				stats.className = "stats";
 				addStat(stats, "subscribers", channel.channel_subscribers);
 				addStat(stats, "views", channel.channel_views);
-				const selectButton = document.createElement("button");
-				selectButton.className = "channel-select";
-				selectButton.type = "button";
-				selectButton.textContent = "Set up profile";
-				selectButton.addEventListener("click", () => openBusinessProfile(channel));
-				row.append(name, id, stats, selectButton);
+				const actions = document.createElement("div");
+				actions.className = "channel-actions";
+				const profileButton = document.createElement("button");
+				profileButton.type = "button";
+				profileButton.textContent = "Set up profile";
+				profileButton.addEventListener("click", () => openBusinessProfile(channel));
+				const videosButton = document.createElement("button");
+				videosButton.className = "secondary";
+				videosButton.type = "button";
+				videosButton.textContent = "Fetch videos";
+				videosButton.addEventListener("click", () => loadChannelVideos(channel));
+				actions.append(profileButton, videosButton);
+				row.append(name, id, stats, actions);
 				channelList.append(row);
 			});
 		}
+
+		function renderVideos(videos) {
+			videoList.replaceChildren();
+			for (const video of videos) {
+				const row = document.createElement("li");
+				row.className = "video-item";
+				const label = document.createElement("label");
+				const checkbox = document.createElement("input");
+				checkbox.type = "checkbox";
+				checkbox.value = video.youtube_video_id;
+				checkbox.checked = video.selected;
+				checkbox.disabled = video.selected;
+				const details = document.createElement("div");
+				const title = document.createElement("div");
+				title.className = "video-title";
+				title.textContent = video.title || "Untitled video";
+				const description = document.createElement("div");
+				description.className = "video-description";
+				const descriptionInput = document.createElement("textarea");
+				descriptionInput.className = "video-description-input";
+				descriptionInput.dataset.videoId = video.youtube_video_id;
+				descriptionInput.maxLength = 800;
+				descriptionInput.rows = 3;
+				descriptionInput.value = video.description || "";
+				descriptionInput.placeholder = video.description_required
+					? "Add a description before saving this video."
+					: "Edit the YouTube description if needed.";
+				descriptionInput.setAttribute("aria-label", `Description for ${title.textContent}`);
+				description.append(descriptionInput);
+				const stats = document.createElement("div");
+				stats.className = "video-stats";
+				stats.textContent = `${video.views.toLocaleString()} views · ${video.likes.toLocaleString()} likes · ${video.comments.toLocaleString()} comments`;
+				details.append(title, description, stats);
+				label.append(checkbox, details);
+				row.append(label);
+				videoList.append(row);
+			}
+		}
+
+		async function loadChannelVideos(channel) {
+			selectedChannel = channel;
+			const limit = Number(videoLimitInput.value);
+			if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+				videoStatus.textContent = "Choose a video limit from 1 to 500.";
+				return;
+			}
+			videosSection.hidden = false;
+			videoHeading.textContent = `Videos: ${channel.channel_name}`;
+			videoStatus.textContent = `Fetching up to ${limit} videos…`;
+			videoList.replaceChildren();
+			saveVideosButton.disabled = true;
+
+			try {
+				const response = await fetch(
+					`/selection-videos/${encodeURIComponent(channel.youtube_channel_id)}?limit=${limit}`,
+					{ credentials: "same-origin" }
+				);
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Fetch failed (${response.status}).`);
+				}
+
+				channelVideos = await response.json();
+				renderVideos(channelVideos);
+				videoStatus.textContent = channelVideos.length
+					? `${channelVideos.length} videos loaded. Already-selected videos are checked.`
+					: "No videos found on this channel.";
+				saveVideosButton.disabled = false;
+			} catch (error) {
+				videoStatus.textContent = error.message || "Could not connect to the API.";
+			}
+
+			videosSection.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+
+		saveVideosButton.addEventListener("click", async () => {
+			if (!selectedChannel) return;
+			const selectedIds = Array.from(
+				videoList.querySelectorAll("input[type=checkbox]:checked")
+			).map((checkbox) => checkbox.value);
+			const descriptions = new Map(
+				Array.from(videoList.querySelectorAll("textarea[data-video-id]"))
+					.map((input) => [input.dataset.videoId, input.value.trim()])
+			);
+			const missingDescription = selectedIds.find((videoId) => {
+				const video = channelVideos.find((item) => item.youtube_video_id === videoId);
+				return video.description_required && !descriptions.get(videoId);
+			});
+			if (missingDescription) {
+				videoStatus.textContent = "Add a description for each selected video that has none on YouTube.";
+				videoList.querySelector(`textarea[data-video-id="${missingDescription}"]`)?.focus();
+				return;
+			}
+
+			videoStatus.textContent = "Saving selected videos…";
+			saveVideosButton.disabled = true;
+
+			try {
+				const response = await fetch("/selection-videos", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						channel_id: selectedChannel.youtube_channel_id,
+						videos: selectedIds.map((youtube_video_id) => ({
+							youtube_video_id,
+							description: descriptions.get(youtube_video_id) || ""
+						}))
+					})
+				});
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Save failed (${response.status}).`);
+				}
+
+				const savedVideos = await response.json();
+				const savedById = new Map(savedVideos.map((video) => [video.youtube_video_id, video]));
+				channelVideos = channelVideos.map((video) =>
+					savedById.has(video.youtube_video_id)
+						? { ...video, ...savedById.get(video.youtube_video_id) }
+						: video
+				);
+				renderVideos(channelVideos);
+				videoStatus.textContent = `${savedVideos.length} videos saved with their latest details.`;
+			} catch (error) {
+				videoStatus.textContent = error.message || "Could not connect to the API.";
+			} finally {
+				saveVideosButton.disabled = false;
+			}
+		});
 
 		async function openBusinessProfile(channel) {
 			selectedChannel = channel;
