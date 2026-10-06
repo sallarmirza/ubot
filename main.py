@@ -8,6 +8,7 @@ from core.config import settings
 from db_manager import db_manager                      # <- add
 
 from router.business_profile_router import router as business_profile_router
+from router.comments_fetching_router import router as comments_fetching_router
 from router.google_oauth_router import router as oauth_router
 from router.selection_video_router import router as selection_video_router
 
@@ -32,6 +33,7 @@ app.add_middleware(
 app.include_router(oauth_router, prefix="/auth")
 app.include_router(business_profile_router)
 app.include_router(selection_video_router)
+app.include_router(comments_fetching_router)
 app.mount("/test", StaticFiles(directory="test", html=True), name="test")
 
 
