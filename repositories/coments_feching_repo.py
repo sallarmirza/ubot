@@ -2,30 +2,7 @@ from collections.abc import Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
-from db_model import Comments, TargetChannel, TargetVideo, Videos, YoutubeChannel
-
-
-def get_selected_video(
-	db: Session,
-	user_id: int,
-	youtube_channel_id: str,
-	youtube_video_id: str,
-) -> TargetVideo | None:
-	"""Return the selected video only when it belongs to this user and channel."""
-	return (
-		db.query(TargetVideo)
-		.join(Videos, TargetVideo.video_id == Videos.video_id)
-		.join(TargetChannel, TargetChannel.target_channel_id == Videos.target_channel_id)
-		.join(YoutubeChannel, YoutubeChannel.channel_id == TargetChannel.channel_id)
-		.filter(
-			YoutubeChannel.user_id == user_id,
-			YoutubeChannel.youtube_channel_id == youtube_channel_id,
-			TargetChannel.user_id == user_id,
-			TargetVideo.user_id == user_id,
-			Videos.youtube_video_id == youtube_video_id,
-		)
-		.first()
-	)
+from db_model import Comments
 
 
 def get_comments(db: Session, selected_video_id: int) -> list[Comments]:
@@ -132,30 +109,6 @@ def save_fetched_comments(
 
 	db.flush()
 	return saved_comments
-
-
-def update_comment(
-	db: Session,
-	selected_video_id: int,
-	youtube_comment_id: str,
-	comment_text: str,
-	ai_reply: str | None,
-	is_replied: bool,
-) -> Comments | None:
-	"""Update a comment and its reply state; return None when it is not found."""
-	_validate_youtube_comment_id(youtube_comment_id)
-	_validate_comment_text(comment_text)
-	if ai_reply is not None and len(ai_reply) > 800:
-		raise ValueError("AI reply exceeds the database column limit")
-	comment = get_comment(db, selected_video_id, youtube_comment_id)
-	if comment is None:
-		return None
-
-	comment.comment_text = comment_text
-	comment.ai_reply = ai_reply
-	comment.is_replied = is_replied
-	db.flush()
-	return comment
 
 
 def delete_comment(
