@@ -41,6 +41,7 @@
 		button:focus-visible { outline: 3px solid #90cbb2; outline-offset: 2px; }
 		button.secondary { background: transparent; color: #42524d; }
 		button.secondary:hover { background: #edf2ef; }
+		.demo-entry { margin-top: 24px; }
 		main { width: min(880px, calc(100% - 40px)); margin: 58px auto; }
 		.eyebrow { color: #58756a; font-size: 12px; font-weight: 700; text-transform: uppercase; }
 		h1 { margin: 10px 0 8px; font-size: clamp(28px, 5vw, 38px); font-weight: 650; }
@@ -89,6 +90,24 @@
 		.video-note { color: #60706a; font-size: 13px; line-height: 1.5; }
 		.video-stats { color: #52645c; font-size: 13px; }
 		#video-status { color: #52645c; }
+		#analytics-panel { margin-top: 32px; }
+		#analytics-status { color: #52645c; }
+		.analytics-list { display: grid; gap: 16px; list-style: none; margin: 16px 0; padding: 0; }
+		.analytics-card { min-width: 0; padding: 18px; background: #fff; border: 1px solid #e1e8e3; border-radius: 8px; }
+		.analytics-card h4 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+		.analytics-channel, .analytics-id, .analytics-muted { color: #60706a; font-size: 13px; }
+		.analytics-id { overflow-wrap: anywhere; }
+		.analytics-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+		.analytics-stat { min-width: 112px; padding: 10px 12px; background: #f3f6f4; border-radius: 6px; }
+		.analytics-stat strong { display: block; font-size: 18px; }
+		.analytics-stat span { color: #60706a; font-size: 12px; }
+		.analytics-details { margin-top: 12px; border-top: 1px solid #e1e8e3; }
+		.analytics-details summary { padding: 12px 0 4px; color: #176b52; font-weight: 650; cursor: pointer; }
+		.analytics-section-title { margin: 16px 0 8px; font-size: 14px; }
+		.analytics-copy { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.analytics-record { margin: 8px 0; padding: 12px; background: #f7f9f7; border-radius: 6px; overflow-wrap: anywhere; }
+		.analytics-record p { margin: 6px 0; white-space: pre-wrap; }
+		.analytics-record-list { list-style: none; padding: 0; margin: 0; }
 		#comments-panel { margin-top: 28px; }
 		#comments-status { color: #52645c; }
 		.comment-list { list-style: none; padding: 0; margin: 12px 0; }
@@ -118,6 +137,35 @@
 			font: inherit;
 		}
 		#profile-status { color: #52645c; }
+		#interactive-demo {
+			margin: 24px 0 36px;
+			padding: 24px;
+			background: #fff;
+			border: 1px solid #dce5df;
+			border-radius: 10px;
+		}
+		.demo-intro { color: #60706a; line-height: 1.55; }
+		.demo-video-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr); gap: 22px; }
+		.demo-player { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 8px; background: #17211d; }
+		.demo-video-title { margin: 12px 0 6px; font-size: 18px; }
+		.demo-persona { padding: 16px; background: #f3f6f4; border-radius: 8px; }
+		.demo-persona h3 { margin: 0 0 10px; font-size: 15px; }
+		.demo-persona p { margin: 7px 0; color: #52645c; font-size: 13px; line-height: 1.5; }
+		.demo-sample-list { display: grid; gap: 8px; padding: 0; list-style: none; }
+		.demo-sample { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 10px; background: #fff; border: 1px solid #e1e8e3; border-radius: 6px; }
+		.demo-sample p { flex: 1; margin: 0; color: #263b32; }
+		.demo-sample button { flex-shrink: 0; min-height: 34px; padding: 0 10px; font-size: 12px; }
+		.demo-conversation { display: grid; gap: 10px; max-height: 300px; overflow-y: auto; margin: 20px 0; padding: 14px; background: #f7f9f7; border-radius: 8px; }
+		.demo-message { width: fit-content; max-width: min(88%, 620px); padding: 10px 13px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.demo-message.visitor { justify-self: end; background: #dcefe6; }
+		.demo-message.ai { justify-self: start; background: #fff; border: 1px solid #e1e8e3; }
+		.demo-message-label { display: block; margin-bottom: 4px; color: #60706a; font-size: 11px; font-weight: 700; }
+		.demo-form { display: grid; gap: 10px; }
+		.demo-form label { font-weight: 600; }
+		.demo-form textarea { width: 100%; min-height: 92px; padding: 11px; border: 1px solid #cbd7d0; border-radius: 6px; font: inherit; resize: vertical; }
+		.demo-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+		.demo-form-actions span, #demo-status { color: #60706a; font-size: 13px; }
+		#demo-status { min-height: 20px; margin: 4px 0 0; }
 		[hidden] { display: none !important; }
 		@keyframes arrive { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 		@media (max-width: 520px) {
@@ -125,7 +173,10 @@
 			main { margin: 38px auto; }
 			.channel { grid-template-columns: 1fr; }
 			.stats { gap: 16px; flex-wrap: wrap; }
-				#business-profile { padding: 18px; }
+			#business-profile, #interactive-demo { padding: 18px; }
+			.demo-video-layout { grid-template-columns: 1fr; }
+			.demo-sample { flex-direction: column; }
+			.demo-form-actions { align-items: start; flex-direction: column; }
 		}
 		@media (prefers-reduced-motion: reduce) {
 			*, *::before, *::after { animation-duration: 0.01ms !important; }
@@ -142,6 +193,46 @@
 		<div class="eyebrow">YouTube workspace</div>
 		<h1>Your channels</h1>
 		<p class="intro">Connect your Google account to see the YouTube channels it manages.</p>
+		<div class="demo-entry">
+			<button id="open-demo-button" class="secondary" type="button">Try the interactive demo</button>
+		</div>
+		<section id="interactive-demo" aria-labelledby="demo-heading" hidden>
+			<div class="section-heading" style="margin-top: 0">
+				<div>
+					<div class="eyebrow">No sign-in required · Demo only</div>
+					<h2 id="demo-heading">See AI replies in action</h2>
+				</div>
+				<button id="reset-demo-button" class="secondary" type="button">Reset demo</button>
+			</div>
+			<p class="demo-intro">Explore a sample video and business persona, then try a comment. Replies are generated for demonstration only; nothing is saved or posted to YouTube.</p>
+			<p id="demo-status" role="status" aria-live="polite">Loading demo…</p>
+			<div id="demo-content" hidden>
+				<div class="demo-video-layout">
+					<div>
+						<iframe id="demo-player" class="demo-player" title="Sample demo video" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+						<h3 id="demo-video-title" class="demo-video-title"></h3>
+						<p id="demo-video-description" class="video-note"></p>
+					</div>
+					<aside class="demo-persona" aria-labelledby="demo-persona-heading">
+						<h3 id="demo-persona-heading">Demo business persona</h3>
+						<p id="demo-business-name"></p>
+						<p id="demo-business-tone"></p>
+						<p id="demo-business-offers"></p>
+						<h3>Try a sample comment</h3>
+						<ul id="demo-sample-comments" class="demo-sample-list"></ul>
+					</aside>
+				</div>
+				<div id="demo-conversation" class="demo-conversation" aria-label="Demo conversation" aria-live="polite"></div>
+				<form id="demo-comment-form" class="demo-form">
+					<label for="demo-comment">Write a comment</label>
+					<textarea id="demo-comment" name="comment" maxlength="400" required placeholder="Ask a question about the sample video…"></textarea>
+					<div class="demo-form-actions">
+						<span id="demo-comment-count">0 / 400</span>
+						<button id="demo-submit-button" type="submit">Generate demo reply</button>
+					</div>
+				</form>
+			</div>
+		</section>
 		<div class="section-heading">
 			<h2>Connected channels</h2>
 			<span id="channel-count"></span>
@@ -193,11 +284,36 @@
 				<ul id="comments-list" class="comment-list"></ul>
 			</div>
 		</section>
+		<section id="analytics-panel" aria-labelledby="analytics-heading">
+			<div class="section-heading">
+				<h2 id="analytics-heading">Selected-video analytics</h2>
+				<button id="load-analytics" class="secondary" type="button">Load all selected analytics</button>
+			</div>
+			<p id="analytics-status" role="status" aria-live="polite">Load stored statistics, comments, reply activity, and snapshots for your selected videos.</p>
+			<ul id="analytics-list" class="analytics-list"></ul>
+		</section>
 	</main>
 	<script>
 		const loginButton = document.querySelector("#login-button");
 		const logoutButton = document.querySelector("#logout-button");
 		const status = document.querySelector("#status");
+		const openDemoButton = document.querySelector("#open-demo-button");
+		const interactiveDemo = document.querySelector("#interactive-demo");
+		const resetDemoButton = document.querySelector("#reset-demo-button");
+		const demoStatus = document.querySelector("#demo-status");
+		const demoContent = document.querySelector("#demo-content");
+		const demoPlayer = document.querySelector("#demo-player");
+		const demoVideoTitle = document.querySelector("#demo-video-title");
+		const demoVideoDescription = document.querySelector("#demo-video-description");
+		const demoBusinessName = document.querySelector("#demo-business-name");
+		const demoBusinessTone = document.querySelector("#demo-business-tone");
+		const demoBusinessOffers = document.querySelector("#demo-business-offers");
+		const demoSampleComments = document.querySelector("#demo-sample-comments");
+		const demoConversation = document.querySelector("#demo-conversation");
+		const demoCommentForm = document.querySelector("#demo-comment-form");
+		const demoCommentInput = document.querySelector("#demo-comment");
+		const demoCommentCount = document.querySelector("#demo-comment-count");
+		const demoSubmitButton = document.querySelector("#demo-submit-button");
 		const channelList = document.querySelector("#channels");
 		const channelCount = document.querySelector("#channel-count");
 		const profileSection = document.querySelector("#business-profile");
@@ -210,6 +326,9 @@
 		const videoStatus = document.querySelector("#video-status");
 		const videoList = document.querySelector("#video-list");
 		const saveVideosButton = document.querySelector("#save-videos");
+		const loadAnalyticsButton = document.querySelector("#load-analytics");
+		const analyticsStatus = document.querySelector("#analytics-status");
+		const analyticsList = document.querySelector("#analytics-list");
 		const commentsPanel = document.querySelector("#comments-panel");
 		const commentsHeading = document.querySelector("#comments-heading");
 		const commentsStatus = document.querySelector("#comments-status");
@@ -222,6 +341,130 @@
 		let channelVideos = [];
 		let draftOffset = 0;
 		let hasMoreDrafts = false;
+		let demoLoaded = false;
+		let demoBusy = false;
+
+		function addDemoMessage(kind, label, text) {
+			const message = document.createElement("div");
+			message.className = `demo-message ${kind}`;
+			const heading = document.createElement("span");
+			heading.className = "demo-message-label";
+			heading.textContent = label;
+			const content = document.createElement("span");
+			content.textContent = text;
+			message.append(heading, content);
+			demoConversation.append(message);
+			demoConversation.scrollTop = demoConversation.scrollHeight;
+		}
+
+		function renderDemoContent(data) {
+			demoPlayer.src = data.video.embed_url;
+			demoPlayer.title = data.video.title || "Sample demo video";
+			demoVideoTitle.textContent = data.video.title || "Sample video";
+			demoVideoDescription.textContent = data.video.description || "";
+			demoBusinessName.textContent = `Business: ${data.persona.business_name}`;
+			demoBusinessTone.textContent = `Tone: ${data.persona.tone}`;
+			demoBusinessOffers.textContent = `Offers: ${data.persona.offers}`;
+			demoSampleComments.replaceChildren();
+			for (const sample of data.comments) {
+				const item = document.createElement("li");
+				item.className = "demo-sample";
+				const text = document.createElement("p");
+				text.textContent = `${sample.author}: ${sample.text}`;
+				const tryButton = document.createElement("button");
+				tryButton.className = "secondary";
+				tryButton.type = "button";
+				tryButton.textContent = "Try this";
+				tryButton.addEventListener("click", () => {
+					demoCommentInput.value = sample.text;
+					updateDemoCommentCount();
+					submitDemoComment(sample.text);
+				});
+				item.append(text, tryButton);
+				demoSampleComments.append(item);
+			}
+			demoConversation.replaceChildren();
+			demoLoaded = true;
+			demoContent.hidden = false;
+			demoStatus.textContent = "Demo ready. Try one of the sample comments or write your own.";
+		}
+
+		async function loadInteractiveDemo(reset = false) {
+			demoStatus.textContent = "Loading demo video and sample comments…";
+			demoContent.hidden = true;
+			try {
+				const response = await fetch("/demo/video");
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Demo could not be loaded (${response.status}).`);
+				}
+				const data = await response.json();
+				const embedUrl = new URL(data.video.embed_url);
+				if (embedUrl.protocol !== "https:" || embedUrl.hostname !== "www.youtube-nocookie.com") {
+					throw new Error("The demo video URL is not allowed.");
+				}
+				renderDemoContent(data);
+				if (reset) {
+					demoCommentInput.value = "";
+					updateDemoCommentCount();
+				}
+			} catch (error) {
+				demoLoaded = false;
+				demoStatus.textContent = error.message || "Could not load the demo.";
+			}
+		}
+
+		function updateDemoCommentCount() {
+			demoCommentCount.textContent = `${demoCommentInput.value.length} / 400`;
+		}
+
+		async function submitDemoComment(commentText) {
+			const comment = commentText.trim();
+			if (!comment || demoBusy) {
+				if (!comment) demoStatus.textContent = "Enter a comment before requesting a reply.";
+				return;
+			}
+			if (comment.length > 400) {
+				demoStatus.textContent = "Comments must be 400 characters or fewer.";
+				return;
+			}
+			demoBusy = true;
+			demoSubmitButton.disabled = true;
+			demoStatus.textContent = "Generating a reply…";
+			addDemoMessage("visitor", "You", comment);
+			try {
+				const response = await fetch("/demo/reply", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ comment })
+				});
+				const result = await response.json().catch(() => ({}));
+				if (!response.ok) {
+					throw new Error(result.detail || `Reply generation failed (${response.status}).`);
+				}
+				addDemoMessage("ai", "Northstar Coffee · AI demo reply", result.reply);
+				demoStatus.textContent = "Demo reply generated. Nothing was saved or posted.";
+				demoCommentInput.value = "";
+				updateDemoCommentCount();
+			} catch (error) {
+				demoStatus.textContent = error.message || "Could not generate a demo reply.";
+			} finally {
+				demoBusy = false;
+				demoSubmitButton.disabled = false;
+			}
+		}
+
+		openDemoButton.addEventListener("click", async () => {
+			interactiveDemo.hidden = false;
+			if (!demoLoaded) await loadInteractiveDemo();
+			interactiveDemo.scrollIntoView({ behavior: "smooth", block: "start" });
+		});
+		resetDemoButton.addEventListener("click", () => loadInteractiveDemo(true));
+		demoCommentInput.addEventListener("input", updateDemoCommentCount);
+		demoCommentForm.addEventListener("submit", (event) => {
+			event.preventDefault();
+			submitDemoComment(demoCommentInput.value);
+		});
 
 		function addStat(container, label, value) {
 			const item = document.createElement("span");
@@ -307,12 +550,170 @@
 				commentsButton.disabled = !video.selected;
 				commentsButton.textContent = video.selected ? "View comments" : "Select and save to view comments";
 				commentsButton.addEventListener("click", () => loadVideoComments(video));
-				details.append(title, description, stats, commentsButton);
+				const analyticsButton = document.createElement("button");
+				analyticsButton.className = "secondary";
+				analyticsButton.type = "button";
+				analyticsButton.disabled = !video.selected;
+				analyticsButton.textContent = "View analytics";
+				analyticsButton.addEventListener("click", () => loadVideoAnalytics(video));
+				const actions = document.createElement("div");
+				actions.className = "channel-actions";
+				actions.append(commentsButton, analyticsButton);
+				details.append(title, description, stats, actions);
 				label.append(checkbox, details);
 				row.append(label);
 				videoList.append(row);
 			}
 		}
+
+		function addAnalyticsStat(container, label, value) {
+			const item = document.createElement("div");
+			item.className = "analytics-stat";
+			const amount = document.createElement("strong");
+			amount.textContent = Number(value || 0).toLocaleString();
+			const caption = document.createElement("span");
+			caption.textContent = label;
+			item.append(amount, caption);
+			container.append(item);
+		}
+
+		function addAnalyticsText(container, label, value) {
+			const paragraph = document.createElement("p");
+			paragraph.className = "analytics-copy";
+			const strong = document.createElement("strong");
+			strong.textContent = `${label}: `;
+			const text = value === null || value === undefined || value === ""
+				? "Not available"
+				: String(value);
+			paragraph.append(strong, document.createTextNode(text));
+			container.append(paragraph);
+		}
+
+		function renderAnalytics(videos) {
+			analyticsList.replaceChildren();
+			if (!videos.length) {
+				analyticsStatus.textContent = "No selected videos were returned. Select and save videos first.";
+				return;
+			}
+			analyticsStatus.textContent = `${videos.length} selected ${videos.length === 1 ? "video" : "videos"} loaded. Statistics are the latest values saved by the selection flow.`;
+			for (const video of videos) {
+				const card = document.createElement("li");
+				card.className = "analytics-card";
+				const title = document.createElement("h4");
+				title.textContent = video.title || "Untitled video";
+				const channel = document.createElement("p");
+				channel.className = "analytics-channel";
+				channel.textContent = video.channel_name || "YouTube channel";
+				const videoId = document.createElement("p");
+				videoId.className = "analytics-id";
+				videoId.textContent = `Video ID: ${video.youtube_video_id}`;
+				const stats = document.createElement("div");
+				stats.className = "analytics-stats";
+				addAnalyticsStat(stats, "Views", video.views);
+				addAnalyticsStat(stats, "Likes", video.likes);
+				addAnalyticsStat(stats, "YouTube comments", video.youtube_comment_count);
+				addAnalyticsStat(stats, "Saved top-level comments", video.saved_top_level_comments);
+				addAnalyticsStat(stats, "Saved replies", video.saved_replies);
+				addAnalyticsStat(stats, "AI drafts", video.generated_drafts);
+				addAnalyticsStat(stats, "Posted replies", video.posted_replies);
+				addAnalyticsStat(stats, "Uncertain posts", video.uncertain_replies);
+
+				const disclosure = document.createElement("details");
+				disclosure.className = "analytics-details";
+				const summary = document.createElement("summary");
+				summary.textContent = "Video details, comment activity, and history";
+				disclosure.append(summary);
+				addAnalyticsText(disclosure, "Selected video ID", video.selected_video_id);
+				addAnalyticsText(disclosure, "YouTube channel ID", video.youtube_channel_id);
+				addAnalyticsText(disclosure, "Description", video.description);
+				addAnalyticsText(disclosure, "Prompt context", video.prompt_context);
+				addAnalyticsText(disclosure, "Selected", video.created_at);
+				addAnalyticsText(disclosure, "Last updated", video.updated_at);
+
+				const commentsTitle = document.createElement("h5");
+				commentsTitle.className = "analytics-section-title";
+				commentsTitle.textContent = `Saved comments and replies (${video.comments.length})`;
+				disclosure.append(commentsTitle);
+				if (video.comments.length) {
+					const commentList = document.createElement("ul");
+					commentList.className = "analytics-record-list";
+					for (const comment of video.comments) {
+						const record = document.createElement("li");
+						record.className = "analytics-record";
+						addAnalyticsText(record, "Comment", comment.comment_text);
+						addAnalyticsText(record, "YouTube comment ID", comment.youtube_comment_id);
+						if (comment.parent_youtube_comment_id) {
+							addAnalyticsText(record, "Parent comment ID", comment.parent_youtube_comment_id);
+						}
+						addAnalyticsText(record, "AI reply", comment.ai_reply);
+						addAnalyticsText(record, "Reply status", comment.reply_status);
+						addAnalyticsText(record, "Posted", comment.is_replied ? "Yes" : "No");
+						addAnalyticsText(record, "YouTube reply ID", comment.youtube_reply_id);
+						addAnalyticsText(record, "Created", comment.created_at);
+						addAnalyticsText(record, "Updated", comment.updated_at);
+						commentList.append(record);
+					}
+					disclosure.append(commentList);
+				} else {
+					addAnalyticsText(disclosure, "Comments", "No comments have been saved for this video yet.");
+				}
+
+				const historyTitle = document.createElement("h5");
+				historyTitle.className = "analytics-section-title";
+				historyTitle.textContent = `Stored analytics snapshots (${video.history.length})`;
+				disclosure.append(historyTitle);
+				if (video.history.length) {
+					const historyList = document.createElement("ul");
+					historyList.className = "analytics-record-list";
+					for (const snapshot of video.history) {
+						const record = document.createElement("li");
+						record.className = "analytics-record";
+						addAnalyticsText(record, "Recorded", snapshot.created_at);
+						addAnalyticsText(record, "Views", snapshot.views);
+						addAnalyticsText(record, "Likes", snapshot.likes);
+						addAnalyticsText(record, "Comments", snapshot.comments);
+						historyList.append(record);
+					}
+					disclosure.append(historyList);
+				} else {
+					addAnalyticsText(disclosure, "History", "No historical snapshots are stored yet.");
+				}
+
+				card.append(title, channel, videoId, stats, disclosure);
+				analyticsList.append(card);
+			}
+			analyticsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+
+		async function requestAnalytics(path, loadingText) {
+			analyticsStatus.textContent = loadingText;
+			loadAnalyticsButton.disabled = true;
+			try {
+				const response = await fetch(path, { credentials: "same-origin" });
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Analytics request failed (${response.status}).`);
+				}
+				renderAnalytics(await response.json());
+			} catch (error) {
+				analyticsStatus.textContent = error.message || "Could not load analytics.";
+			} finally {
+				loadAnalyticsButton.disabled = false;
+			}
+		}
+
+		function loadVideoAnalytics(video) {
+			if (!videoChannel || !video.selected) return;
+			requestAnalytics(
+				`/analytics/selected-videos/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(video.youtube_video_id)}`,
+				`Loading analytics for ${video.title || "selected video"}…`
+			);
+		}
+
+		const analyticsPanel = document.querySelector("#analytics-panel");
+		loadAnalyticsButton.addEventListener("click", () => {
+			requestAnalytics("/analytics/selected-videos", "Loading analytics for all selected videos…");
+		});
 
 		function renderComments(comments, list = commentsList, isReply = false) {
 			list.replaceChildren();
