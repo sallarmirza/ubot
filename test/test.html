@@ -75,6 +75,7 @@
 		.video-item { padding: 16px 0; border-bottom: 1px solid #e1e8e3; }
 		.video-item label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; }
 		.video-item input { margin-top: 4px; }
+		.video-item-details { min-width: 0; }
 		.video-title { font-weight: 650; overflow-wrap: anywhere; }
 		.video-description { margin: 6px 0; color: #60706a; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.video-description-input {
@@ -88,6 +89,15 @@
 		.video-note { color: #60706a; font-size: 13px; line-height: 1.5; }
 		.video-stats { color: #52645c; font-size: 13px; }
 		#video-status { color: #52645c; }
+		#comments-panel { margin-top: 28px; }
+		#comments-status { color: #52645c; }
+		.comment-list { list-style: none; padding: 0; margin: 12px 0; }
+		.comment-item { padding: 14px 0; border-top: 1px solid #e1e8e3; }
+		.comment-reply { margin-left: 24px; padding-left: 14px; border-left: 2px solid #dce5df; }
+		.comment-author { font-size: 14px; font-weight: 650; }
+		.comment-date { margin-left: 8px; color: #77857f; font-size: 12px; }
+		.comment-text { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+		.comment-likes { color: #60706a; font-size: 12px; }
 		.channel-select { grid-column: 1 / -1; justify-self: start; }
 		#business-profile {
 			margin-top: 32px;
@@ -172,6 +182,11 @@
 			<p class="video-note">Descriptions are loaded from YouTube. Edit the text to update it, or add a description when YouTube has none. The full text shown is saved.</p>
 			<p id="video-status" role="status" aria-live="polite"></p>
 			<ul id="video-list" class="video-list"></ul>
+			<div id="comments-panel" hidden>
+				<h3 id="comments-heading">Video comments</h3>
+				<p id="comments-status" role="status" aria-live="polite"></p>
+				<ul id="comments-list" class="comment-list"></ul>
+			</div>
 		</section>
 	</main>
 	<script>
@@ -190,7 +205,12 @@
 		const videoStatus = document.querySelector("#video-status");
 		const videoList = document.querySelector("#video-list");
 		const saveVideosButton = document.querySelector("#save-videos");
+		const commentsPanel = document.querySelector("#comments-panel");
+		const commentsHeading = document.querySelector("#comments-heading");
+		const commentsStatus = document.querySelector("#comments-status");
+		const commentsList = document.querySelector("#comments-list");
 		let selectedChannel = null;
+		let videoChannel = null;
 		let channelVideos = [];
 
 		function addStat(container, label, value) {
@@ -250,8 +270,8 @@
 				checkbox.type = "checkbox";
 				checkbox.value = video.youtube_video_id;
 				checkbox.checked = video.selected;
-				checkbox.disabled = video.selected;
 				const details = document.createElement("div");
+				details.className = "video-item-details";
 				const title = document.createElement("div");
 				title.className = "video-title";
 				title.textContent = video.title || "Untitled video";
@@ -271,15 +291,88 @@
 				const stats = document.createElement("div");
 				stats.className = "video-stats";
 				stats.textContent = `${video.views.toLocaleString()} views · ${video.likes.toLocaleString()} likes · ${video.comments.toLocaleString()} comments`;
-				details.append(title, description, stats);
+				const commentsButton = document.createElement("button");
+				commentsButton.className = "secondary";
+				commentsButton.type = "button";
+				commentsButton.disabled = !video.selected;
+				commentsButton.textContent = video.selected ? "View comments" : "Select and save to view comments";
+				commentsButton.addEventListener("click", () => loadVideoComments(video));
+				details.append(title, description, stats, commentsButton);
 				label.append(checkbox, details);
 				row.append(label);
 				videoList.append(row);
 			}
 		}
 
+		function renderComments(comments, list = commentsList, isReply = false) {
+			list.replaceChildren();
+			for (const comment of comments) {
+				const item = document.createElement("li");
+				item.className = isReply ? "comment-item comment-reply" : "comment-item";
+				const heading = document.createElement("div");
+				heading.className = "comment-author";
+				heading.textContent = comment.author_name || "YouTube user";
+				if (comment.published_at) {
+					const date = document.createElement("time");
+					date.className = "comment-date";
+					date.dateTime = comment.published_at;
+					const parsedDate = new Date(comment.published_at);
+					date.textContent = Number.isNaN(parsedDate.getTime())
+						? comment.published_at
+						: parsedDate.toLocaleString();
+					heading.append(date);
+				}
+				const text = document.createElement("p");
+				text.className = "comment-text";
+				text.textContent = comment.text || "";
+				const likes = document.createElement("div");
+				likes.className = "comment-likes";
+				likes.textContent = `${Number(comment.like_count || 0).toLocaleString()} likes`;
+				item.append(heading, text, likes);
+				const replies = comment.replies || [];
+				if (replies.length) {
+					const replyList = document.createElement("ul");
+					replyList.className = "comment-list";
+					renderComments(replies, replyList, true);
+					item.append(replyList);
+				}
+				list.append(item);
+			}
+		}
+
+		async function loadVideoComments(video) {
+			if (!videoChannel) return;
+			commentsPanel.hidden = false;
+			commentsHeading.textContent = `Comments: ${video.title}`;
+			commentsStatus.textContent = "Loading comments and replies…";
+			commentsList.replaceChildren();
+			try {
+				const response = await fetch(
+					`/comments/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(video.youtube_video_id)}`,
+					{ credentials: "same-origin" }
+				);
+				if (!response.ok) {
+					const result = await response.json().catch(() => ({}));
+					throw new Error(result.detail || `Comments request failed (${response.status}).`);
+				}
+				const comments = await response.json();
+				renderComments(comments);
+				const total = comments.reduce(
+					(count, comment) => count + 1 + (comment.replies || []).length,
+					0
+				);
+				commentsStatus.textContent = total
+					? `${total.toLocaleString()} comments and replies loaded.`
+					: "This video has no comments yet.";
+			} catch (error) {
+				commentsStatus.textContent = error.message || "Could not load comments.";
+			}
+			commentsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
+
 		async function loadChannelVideos(channel) {
 			selectedChannel = channel;
+			videoChannel = channel;
 			const limit = Number(videoLimitInput.value);
 			if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
 				videoStatus.textContent = "Choose a video limit from 1 to 500.";
