@@ -3,28 +3,31 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
-load_dotenv()
 
+load_dotenv()
 DB_URL = os.getenv("DATABASE_URL")
 
 
 class DBManager:
     def __init__(self):
-        self.engine = create_engine(
-            DB_URL,
-            connect_args={"check_same_thread": False},
+        connect_args = (
+            {"check_same_thread": False}
+            if DB_URL and DB_URL.startswith("sqlite")
+            else {}
         )
+        self.engine = create_engine(DB_URL, connect_args=connect_args)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
 
     def create_tables(self):
-        Base.metadata.create_all(bind=self.engine)
+        import db_model  # models register karne ke liye
+        db_model.Base.metadata.create_all(bind=self.engine)
 
     def drop_tables(self):
-        Base.metadata.drop_all(bind=self.engine)
+        import db_model
+        db_model.Base.metadata.drop_all(bind=self.engine)
 
     def get_db(self):
         db = self.SessionLocal()
