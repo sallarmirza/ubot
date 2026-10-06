@@ -2,7 +2,8 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from repositories import coments_feching_repo
+from repositories import ai_repo, coments_feching_repo
+from services import ai_service
 from services.selection_video_service import YOUTUBE_API, _get_access_token
 
 
@@ -12,6 +13,15 @@ DEFAULT_MAX_COMMENTS = 100
 DEFAULT_MAX_REPLIES = 50
 
 
+class _BearerAuth(httpx.Auth):
+	def __init__(self, token: str):
+		self.token = token
+
+	def auth_flow(self, request: httpx.Request):
+		request.headers["Authorization"] = f"Bearer {self.token}"
+		yield request
+
+
 def _youtube_get(access_token: str, endpoint: str, params: dict) -> dict:
 	"""Call one YouTube endpoint and return its JSON response."""
 	try:
@@ -19,6 +29,7 @@ def _youtube_get(access_token: str, endpoint: str, params: dict) -> dict:
 		# user's Google access token.
 		response = httpx.get(
 			f"{YOUTUBE_API}/{endpoint}",
+			auth=_BearerAuth(access_token),
 			params=params,
 			headers={"Authorization": f"Bearer {access_token}"},
 			timeout=20,
@@ -177,7 +188,7 @@ def fetch_video_comments(
 	"""
 	# Verify ownership and selection before contacting YouTube. This ensures a
 	# user can only fetch comments for videos they selected on their own channel.
-	selected_video = coments_feching_repo.get_selected_video(
+	selected_video = ai_repo.get_selected_video(
 		db, user_id, channel_id, video_id
 	)
 	if selected_video is None:
@@ -198,6 +209,9 @@ def fetch_video_comments(
 	# data (ValueError), undo the transaction and return a 422 to the client.
 	try:
 		coments_feching_repo.save_fetched_comments(
+			db, selected_video.selected_video_id, comments
+		)
+		ai_service.attach_saved_reply_state(
 			db, selected_video.selected_video_id, comments
 		)
 		db.commit()

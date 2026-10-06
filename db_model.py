@@ -125,6 +125,7 @@ class TargetVideo(Base):
     comments = Column(Integer, nullable=False, default=0)
     views = Column(Integer, nullable=False, default=0)
     description = Column(String(800), nullable=True)
+    prompt_context = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -134,8 +135,12 @@ class TargetVideo(Base):
 
     user = relationship("User", back_populates="target_videos")
     video = relationship("Videos", back_populates="target_videos")
-    comment_list = relationship("Comments", back_populates="target_video")
-    analytics = relationship("Analytics", back_populates="target_video")
+    comment_list = relationship(
+        "Comments", back_populates="target_video", cascade="all, delete-orphan"
+    )
+    analytics = relationship(
+        "Analytics", back_populates="target_video", cascade="all, delete-orphan"
+    )
 
 
 class Comments(Base):
@@ -162,12 +167,16 @@ class Comments(Base):
 
     # Which selected video this comment belongs to (target_video table).
     selected_video_id = Column(
-        Integer, ForeignKey("target_video.selected_video_id"), nullable=False
+        Integer,
+        ForeignKey("target_video.selected_video_id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     # Self-reference: for a reply, this is the comment_id of the parent comment.
     # NULL means this row is a top-level comment.
-    parent_comment_id = Column(Integer, ForeignKey("comments.comment_id"), nullable=True)
+    parent_comment_id = Column(
+        Integer, ForeignKey("comments.comment_id", ondelete="CASCADE"), nullable=True
+    )
 
     # The comment's ID on YouTube (e.g. "UgxABC..."), used when posting replies.
     youtube_comment_id = Column(String(100), nullable=False)
@@ -180,6 +189,9 @@ class Comments(Base):
 
     # True once the AI reply has been posted on YouTube.
     is_replied = Column(Boolean, nullable=False, default=False)
+    youtube_reply_id = Column(String(100), nullable=True)
+    reply_status = Column(String(20), nullable=False, default="draft")
+    reply_posting_started_at = Column(DateTime, nullable=True)
 
     # Set by the database when the row is inserted / updated.
     created_at = Column(DateTime, server_default=func.now())
@@ -209,7 +221,9 @@ class Analytics(Base):
     analytics_id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     selected_video_id = Column(
-        Integer, ForeignKey("target_video.selected_video_id"), nullable=False
+        Integer,
+        ForeignKey("target_video.selected_video_id", ondelete="CASCADE"),
+        nullable=False,
     )
     likes = Column(Integer, nullable=False, default=0)
     comments = Column(Integer, nullable=False, default=0)
