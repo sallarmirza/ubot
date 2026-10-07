@@ -16,15 +16,16 @@ def _build_video_analytics(db: Session, selected_video: TargetVideo) -> Selected
 	channel = target_channel.channel
 	comments = analytics_repo.get_video_comments(db, selected_video.selected_video_id)
 	history = analytics_repo.get_video_analytics(db, selected_video.selected_video_id)
+	youtube_comment_ids = {
+		comment.comment_id: comment.youtube_comment_id for comment in comments
+	}
 
 	comment_rows = [
 		AnalyticsComment(
 			comment_id=comment.comment_id,
 			youtube_comment_id=comment.youtube_comment_id,
-			parent_youtube_comment_id=(
-				comment.parent_comment.youtube_comment_id
-				if comment.parent_comment is not None
-				else None
+			parent_youtube_comment_id=youtube_comment_ids.get(
+				comment.parent_comment_id
 			),
 			comment_text=comment.comment_text,
 			ai_reply=comment.ai_reply,

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from repositories import ai_repo, coments_feching_repo
 from services import ai_service
+from services.http_clients import get_sync_http_client
 from services.selection_video_service import YOUTUBE_API, _get_access_token
 
 
@@ -27,7 +28,7 @@ def _youtube_get(access_token: str, endpoint: str, params: dict) -> dict:
 	try:
 		# Send a GET request to the YouTube Data API, authenticated with the
 		# user's Google access token.
-		response = httpx.get(
+		response = get_sync_http_client().get(
 			f"{YOUTUBE_API}/{endpoint}",
 			auth=_BearerAuth(access_token),
 			params=params,

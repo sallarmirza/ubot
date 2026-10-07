@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from core.config import settings
 from db_model import TargetChannel, TargetVideo, UserOAuth, Videos, YoutubeChannel
 from schema.selection_video_schema import SelectedVideosRequest, VideoResponse
+from services.http_clients import get_sync_http_client
 
 
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
@@ -69,7 +70,7 @@ def _get_access_token(db: Session, user_id: int) -> str:
 
 	# Exchange the refresh token for a new access token.
 	try:
-		response = httpx.post(
+		response = get_sync_http_client().post(
 			TOKEN_URL,
 			data={
 				"client_id": settings.GOOGLE_CLIENT_ID,
@@ -94,7 +95,7 @@ def _get_access_token(db: Session, user_id: int) -> str:
 
 def _youtube_get(access_token: str, path: str, params: dict) -> dict:
 	try:
-		response = httpx.get(
+		response = get_sync_http_client().get(
 			f"{YOUTUBE_API}/{path}",
 			params=params,
 			headers={"Authorization": f"Bearer {access_token}"},
