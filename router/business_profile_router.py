@@ -11,7 +11,7 @@ from services import business_profile_service
 router = APIRouter(prefix="/business-profile", tags=["business profile"])
 
 
-@router.post("/save-business-profile")
+@router.post("")
 def save_profile(
     payload: BusinessProfileRequest,
     db: Session = Depends(db_manager.get_db),
