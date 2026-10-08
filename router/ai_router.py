@@ -28,8 +28,7 @@ def generate_reply_drafts(
 	)
 
 
-@router.post(
-	"/{channel_id}/{video_id}/comments/{youtube_comment_id}/regenerate-reply",
+@router.post("/{channel_id}/{video_id}/comments/{youtube_comment_id}/regenerate-reply",
 	response_model=ReplyDraftResult,
 )
 def regenerate_comment_reply(

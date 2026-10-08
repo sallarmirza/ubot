@@ -1,7 +1,7 @@
 # app/db_manager.py
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event,inspect,text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import declarative_base
 
@@ -13,13 +13,38 @@ DB_URL = os.getenv("DATABASE_URL")
 
 class DBManager:
     def __init__(self):
+        is_sqlite = bool(DB_URL and DB_URL.startswith("sqlite"))
+
         connect_args = (
-            {"check_same_thread": False}
-            if DB_URL and DB_URL.startswith("sqlite")
+            # check_same_thread: SQLAlchemy shares connections across threads
+            # timeout:           wait up to 30s before raising "database is locked"
+            {"check_same_thread": False, "timeout": 30}
+            if is_sqlite
             else {}
         )
+
         self.engine = create_engine(DB_URL, connect_args=connect_args)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
+
+        if is_sqlite:
+            self._enable_sqlite_wal()
+
+    def _enable_sqlite_wal(self):
+        """Turn on WAL mode so readers don't block writers and vice-versa.
+
+        Without this, SQLite allows either one writer OR many readers. If a
+        slow endpoint (e.g. one calling YouTube for 20 seconds) holds a write
+        transaction, any concurrent read fails instantly with "database is
+        locked". WAL mode lets readers and the writer coexist.
+        """
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, _):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds
+            cursor.close()
 
     def create_tables(self):
         import db_model  # models register karne ke liye

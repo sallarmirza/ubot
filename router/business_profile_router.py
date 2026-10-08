@@ -8,10 +8,11 @@ from schema.business_profile_schema import BusinessProfileRequest
 from services import business_profile_service
 
 
-router = APIRouter(prefix="/business-profile", tags=["business profile"])
+router = APIRouter(tags=["business profile"])
 
 
-@router.post("")
+
+@router.post("/save")
 def save_profile(
     payload: BusinessProfileRequest,
     db: Session = Depends(db_manager.get_db),

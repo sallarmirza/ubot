@@ -43,9 +43,13 @@ def google_callback(
     db: Session = Depends(db_manager.get_db),
 ):
     """Google sends the user back here: verify state, save tokens, set the JWT cookie."""
-    frontend_page = settings.FRONTEND_URL or f"{str(request.base_url).rstrip('/')}/test/test.html"
+    # frontend_page = settings.FRONTEND_URL or f"{str(request.base_url).rstrip('/')}/test/test.html"
+    # TEMP debug: show what the callback request actually carries
+    print("HOST:", request.headers.get("host"))
+    print("COOKIE HEADER:", request.headers.get("cookie"))
+    print("URL:", request.url)
     def failed(reason: str) -> RedirectResponse:
-        return RedirectResponse(f"{frontend_page}?error=oauth_failed&reason={reason}")
+        return RedirectResponse(f"{settings.FRONTEND_URL}?error=oauth_failed&reason={reason}")
 
     saved_state = request.cookies.get(STATE_COOKIE)
     if error:
@@ -70,7 +74,7 @@ def google_callback(
         return failed("no_youtube_channel")
 
     # Success: set the JWT on the same response we return, and clear the temporary state cookie
-    response = RedirectResponse(frontend_page)
+    response = RedirectResponse(settings.FRONTEND_URL)
     set_auth_cookie(response, create_access_token(user_id))
     response.delete_cookie(STATE_COOKIE)
     return response
