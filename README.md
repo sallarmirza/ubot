@@ -32,3 +32,13 @@ also deletes its related comments, replies, and analytics.
 AI reply code is separated into `router/ai_router.py`, `services/ai_service.py`,
 and `repositories/ai_repo.py`. Comment loading remains under the comments
 router and service.
+
+## Selected-video analytics
+
+The authenticated `GET /analytics/selected-videos` endpoint returns current
+stored video statistics, channel/video metadata, prompt context, saved comments
+and reply status counts, individual saved comments/replies, and any stored
+analytics snapshots for all of the signed-in user's selected videos. Use
+`GET /analytics/selected-videos/{channel_id}/{video_id}` for one selected video.
+These endpoints report locally stored data; refresh video statistics or fetch
+comments through their existing endpoints to update that data.

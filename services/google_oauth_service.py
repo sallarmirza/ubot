@@ -1,7 +1,8 @@
 from urllib.parse import urlencode
-import httpx
+
 from core.config import settings
 from schema.oauth_schema import GoogleOAuthError
+from services.http_clients import get_sync_http_client
 
 # talk to google only 
 
@@ -34,7 +35,7 @@ def build_login_url(state:str)->str:
 # get long term token 
 def exchange_code_for_tokens(code:str)->dict:
     """exchange the one-time code for access_token and refresh_token"""
-    resp=httpx.post(
+    resp=get_sync_http_client().post(
         TOKEN_URL,
         data={
             "code":code,
@@ -52,7 +53,7 @@ def exchange_code_for_tokens(code:str)->dict:
 # fetch all channels of user
 def fetch_my_channels(access_token: str) -> list[dict]:
     """list the YouTube channels owned by the logged-in Google account."""
-    resp = httpx.get(
+    resp = get_sync_http_client().get(
         CHANNELS_URL,
         params={"part": "snippet,statistics", "mine": "true"},
         headers={"Authorization": f"Bearer {access_token}"},

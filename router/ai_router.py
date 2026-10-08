@@ -15,7 +15,7 @@ router = APIRouter(prefix="/ai", tags=["AI replies"])
 	"/{channel_id}/{video_id}/generate-replies",
 	response_model=ReplyDraftBatch,
 )
-def generate_reply_drafts(
+async def generate_reply_drafts(
 	channel_id: str,
 	video_id: str,
 	offset: int = Query(0, ge=0),
@@ -23,7 +23,7 @@ def generate_reply_drafts(
 	db: Session = Depends(db_manager.get_db),
 	user: User = Depends(get_current_user),
 ):
-	return ai_service.generate_video_reply_drafts(
+	return await ai_service.generate_video_reply_drafts(
 		db, user.user_id, channel_id, video_id, offset=offset, max_drafts=limit
 	)
 
