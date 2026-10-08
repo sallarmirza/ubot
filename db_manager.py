@@ -27,6 +27,7 @@ class DBManager:
         migrations = {
             "target_video": {"prompt_context": "TEXT"},
             "comments": {
+                "parent_comment_id": "INTEGER REFERENCES comments(comment_id)",
                 "youtube_reply_id": "VARCHAR(100)",
                 "reply_status": "VARCHAR(20) NOT NULL DEFAULT 'draft'",
                 "reply_posting_started_at": "DATETIME",

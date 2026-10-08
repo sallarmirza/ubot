@@ -44,3 +44,12 @@ wheels/
 Thumbs.db
 
 ubot.db
+*.db
+
+server.stderr.log
+server.stdout.log
+
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
