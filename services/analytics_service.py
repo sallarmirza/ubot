@@ -24,6 +24,7 @@ def _build_video_analytics(db: Session, selected_video: TargetVideo) -> Selected
 		AnalyticsComment(
 			comment_id=comment.comment_id,
 			youtube_comment_id=comment.youtube_comment_id,
+			video_name=comment.video_name,
 			parent_youtube_comment_id=youtube_comment_ids.get(
 				comment.parent_comment_id
 			),
@@ -44,7 +45,7 @@ def _build_video_analytics(db: Session, selected_video: TargetVideo) -> Selected
 	return SelectedVideoAnalytics(
 		selected_video_id=selected_video.selected_video_id,
 		youtube_channel_id=channel.youtube_channel_id,
-		channel_name=channel.channel_name,
+		channel_name=selected_video.channel_name or channel.channel_name,
 		youtube_video_id=video.youtube_video_id,
 		title=video.title,
 		description=selected_video.description,

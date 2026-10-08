@@ -22,12 +22,13 @@ prompting so the app can refresh access tokens. After these scopes change,
 sign in again and approve the updated permissions. Returning sign-ins retain a
 previous refresh token if Google omits a replacement.
 
-Startup adds the AI prompt context and reply tracking/posting-state columns to
-existing databases. Reply posting uses an atomic database claim, so concurrent
-requests across server workers cannot post the same draft twice. If the
-connection fails after sending a post request, the state is kept as uncertain;
-check YouTube manually before retrying to avoid duplicates. Deselecting a video
-also deletes its related comments, replies, and analytics.
+Startup creates missing tables from the SQLAlchemy models. It does not migrate
+existing tables; update an existing database schema separately when its columns
+do not match the models. Reply posting uses an atomic database claim, so
+concurrent requests across server workers cannot post the same draft twice. If
+the connection fails after sending a post request, the state is kept as
+uncertain; check YouTube manually before retrying to avoid duplicates.
+Deselecting a video also deletes its related comments, replies, and analytics.
 
 AI reply code is separated into `router/ai_router.py`, `services/ai_service.py`,
 and `repositories/ai_repo.py`. Comment loading remains under the comments
@@ -42,3 +43,7 @@ analytics snapshots for all of the signed-in user's selected videos. Use
 `GET /analytics/selected-videos/{channel_id}/{video_id}` for one selected video.
 These endpoints report locally stored data; refresh video statistics or fetch
 comments through their existing endpoints to update that data.
+
+Video-selection responses include the YouTube channel name for each video.
+Selected-video analytics also returns the stored channel name and each saved
+comment's video name.

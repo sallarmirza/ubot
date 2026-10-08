@@ -2,7 +2,16 @@ from collections.abc import Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
-from db_model import Comments
+from db_model import Comments, TargetVideo
+
+
+def _get_video_name(db: Session, selected_video_id: int) -> str | None:
+	selected_video = (
+		db.query(TargetVideo)
+		.filter_by(selected_video_id=selected_video_id)
+		.first()
+	)
+	return selected_video.video.title if selected_video is not None else None
 
 
 def get_comments(db: Session, selected_video_id: int) -> list[Comments]:
@@ -54,6 +63,7 @@ def create_comment(
 		selected_video_id=selected_video_id,
 		youtube_comment_id=youtube_comment_id,
 		comment_text=comment_text,
+		video_name=_get_video_name(db, selected_video_id),
 		parent_comment_id=parent_comment_id,
 	)
 	db.add(comment)
@@ -84,6 +94,7 @@ def save_fetched_comments(
 		.all()
 	)
 	by_youtube_id = {comment.youtube_comment_id: comment for comment in existing_comments}
+	video_name = _get_video_name(db, selected_video_id)
 
 	saved_comments = []
 	for youtube_comment_id, comment_text, parent_youtube_comment_id in comment_data:
@@ -98,12 +109,14 @@ def save_fetched_comments(
 				selected_video_id=selected_video_id,
 				youtube_comment_id=youtube_comment_id,
 				comment_text=comment_text,
+				video_name=video_name,
 				parent_comment=parent_comment,
 			)
 			db.add(comment)
 			by_youtube_id[youtube_comment_id] = comment
 		else:
 			comment.comment_text = comment_text
+			comment.video_name = video_name
 			comment.parent_comment = parent_comment
 		saved_comments.append(comment)
 

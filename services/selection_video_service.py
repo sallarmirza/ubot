@@ -272,6 +272,7 @@ def list_channel_videos(
 				),
 			},
 			selected=video["youtube_video_id"] in selected_descriptions,
+			channel_name=channel.channel_name,
 		)
 		for video in videos
 	]
@@ -359,11 +360,16 @@ def save_selected_videos(
 		if selected is None:
 			selected = TargetVideo(user_id=user_id, video_id=video.video_id)
 			db.add(selected)
+		selected.channel_name = channel.channel_name
 		selected.views = video_data["views"]
 		selected.likes = video_data["likes"]
 		selected.comments = video_data["comments"]
 		selected.description = video_data["description"]
-		saved_videos.append(VideoResponse(**video_data, selected=True))
+		saved_videos.append(
+			VideoResponse(
+				**video_data, selected=True, channel_name=channel.channel_name
+			)
+		)
 
 	db.commit()
 	return saved_videos

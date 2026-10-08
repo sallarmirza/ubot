@@ -8,6 +8,7 @@ class AnalyticsComment(BaseModel):
 
 	comment_id: int
 	youtube_comment_id: str
+	video_name: str | None
 	parent_youtube_comment_id: str | None
 	comment_text: str
 	ai_reply: str | None
