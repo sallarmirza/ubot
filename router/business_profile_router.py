@@ -8,7 +8,7 @@ from schema.business_profile_schema import BusinessProfileRequest
 from services import business_profile_service
 
 
-router = APIRouter(prefix="/business-profile", tags=["business profile"])
+router = APIRouter(tags=["business profile"])
 
 
 @router.post("/save")

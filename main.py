@@ -57,7 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(oauth_router, prefix="/auth")
-app.include_router(business_profile_router)
+app.include_router(business_profile_router,prefix='/business-profile')
 app.include_router(ai_router)
 app.include_router(analytics_router)
 app.include_router(demo_router)

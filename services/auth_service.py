@@ -6,11 +6,15 @@ from schema.oauth_schema import GoogleOAuthError
 from services import google_oauth_service as google
 
 # run the app flow logic 
-def login_with_google(db: Session, code: str) -> int:
-    """Code from Google in, user_id out."""
+def login_with_google(db: Session, code: str) -> tuple[int, str]:
+    """Exchange a Google code and return the local user and primary channel IDs."""
     # 1. Swap the code for tokens, then ask Google which channels this account owns
     tokens = google.exchange_code_for_tokens(code)
-    channels = google.fetch_my_channels(tokens["access_token"])
+    access_token = tokens.get("access_token")
+    if not access_token:
+        raise GoogleOAuthError("Token Exchange failed: missing access token")
+
+    channels = google.fetch_my_channels(access_token)
     if not channels:
         raise GoogleOAuthError("No YouTube channel found on this Google account")
 
@@ -28,7 +32,7 @@ def login_with_google(db: Session, code: str) -> int:
     repo.upsert_oauth(
         db,
         user_id=user_id,
-        access_token=tokens["access_token"],
+        access_token=access_token,
         refresh_token=tokens.get("refresh_token"),
         expires_at=expires_at,
         scopes=tokens.get("scope"),
@@ -37,4 +41,4 @@ def login_with_google(db: Session, code: str) -> int:
     # 4. Store/refresh channels, then commit everything at once
     repo.upsert_channels(db, user_id, channels)
     db.commit()
-    return user_id
+    return user_id, channels[0]["youtube_channel_id"]

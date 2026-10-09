@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 
 import httpx
 from fastapi import HTTPException
@@ -14,6 +15,7 @@ YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 DEFAULT_VIDEO_LIMIT = 5
 MAX_VIDEO_LIMIT = 500
+logger = logging.getLogger(__name__)
 
 # Refresh the Google token this long BEFORE it actually expires, so a token
 # that is about to expire is never used for a request.
@@ -78,7 +80,7 @@ def _get_access_token(db: Session, user_id: int) -> str:
 				"refresh_token": oauth.refresh_token,
 				"grant_type": "refresh_token",
 			},
-			timeout=15,
+			timeout=settings.YOUTUBE_REQUEST_TIMEOUT_SECONDS,
 		)
 	except httpx.RequestError as error:
 		raise HTTPException(status_code=502, detail="Could not refresh Google access") from error
@@ -99,7 +101,7 @@ def _youtube_get(access_token: str, path: str, params: dict) -> dict:
 			f"{YOUTUBE_API}/{path}",
 			params=params,
 			headers={"Authorization": f"Bearer {access_token}"},
-			timeout=20,
+			timeout=settings.YOUTUBE_REQUEST_TIMEOUT_SECONDS,
 		)
 	except httpx.RequestError as error:
 		raise HTTPException(status_code=502, detail="Could not reach YouTube") from error
@@ -233,10 +235,66 @@ def _remove_deselected_videos(
 		db.delete(selection)
 
 
+def _cached_channel_videos(
+	db: Session, user_id: int, channel: YoutubeChannel, limit: int
+) -> list[VideoResponse]:
+	"""Return an existing catalog without making the page render wait on Google."""
+	target = (
+		db.query(TargetChannel)
+		.filter_by(user_id=user_id, channel_id=channel.channel_id)
+		.first()
+	)
+	if target is None:
+		return []
+
+	videos = (
+		db.query(Videos)
+		.filter_by(user_id=user_id, target_channel_id=target.target_channel_id)
+		.order_by(Videos.updated_at.desc(), Videos.video_id.desc())
+		.limit(limit)
+		.all()
+	)
+	if not videos:
+		return []
+
+	selected_by_video_id = {
+		selection.video_id: selection
+		for selection in db.query(TargetVideo)
+		.filter_by(user_id=user_id)
+		.filter(TargetVideo.video_id.in_([video.video_id for video in videos]))
+		.all()
+	}
+	return [
+		VideoResponse(
+			youtube_video_id=video.youtube_video_id,
+			title=video.title or "",
+			description=(selected_by_video_id.get(video.video_id).description or "")
+			if video.video_id in selected_by_video_id
+			else "",
+			views=(selected_by_video_id.get(video.video_id).views or 0)
+			if video.video_id in selected_by_video_id
+			else 0,
+			likes=(selected_by_video_id.get(video.video_id).likes or 0)
+			if video.video_id in selected_by_video_id
+			else 0,
+			comments=(selected_by_video_id.get(video.video_id).comments or 0)
+			if video.video_id in selected_by_video_id
+			else 0,
+			selected=video.video_id in selected_by_video_id,
+			description_required=False,
+		)
+		for video in videos
+	]
+
+
 def list_channel_videos(
 	db: Session, user_id: int, channel_id: str, limit: int = DEFAULT_VIDEO_LIMIT
 ) -> list[VideoResponse]:
 	channel = _get_channel(db, user_id, channel_id)
+	cached_videos = _cached_channel_videos(db, user_id, channel, limit)
+	if cached_videos:
+		return cached_videos
+
 	access_token = _get_access_token(db, user_id)
 	videos = _extract_channel_videos(access_token, channel.youtube_channel_id, limit)
 	target = _get_target_channel(db, user_id, channel)
@@ -281,14 +339,15 @@ def list_channel_videos(
 def save_selected_videos(
 	db: Session, user_id: int, payload: SelectedVideosRequest
 ) -> list[VideoResponse]:
-	"""Save the user's COMPLETE selection for a channel.
-
-	The payload is treated as the full list of selected videos: anything
-	previously selected but missing from the list gets deselected (deleted).
-	"""
+	"""Replace this channel's monitored video with exactly one catalog video."""
 	channel = _get_channel(db, user_id, payload.channel_id)
 
 	youtube_ids = [video.youtube_video_id for video in payload.videos]
+	if len(youtube_ids) != 1:
+		raise HTTPException(
+			status_code=422,
+			detail="Select exactly one monitored video",
+		)
 	descriptions = {
 		video.youtube_video_id: video.description for video in payload.videos
 	}
@@ -304,12 +363,6 @@ def save_selected_videos(
 			return []
 		raise HTTPException(status_code=400, detail="Load channel videos before selecting")
 
-	# Empty list: the user deselected everything.
-	if not youtube_ids:
-		_remove_deselected_videos(db, user_id, target, [])
-		db.commit()
-		return []
-
 	# Every requested video must already be in the local catalog.
 	catalog = (
 		db.query(Videos)
@@ -324,34 +377,18 @@ def save_selected_videos(
 	if len(catalog_by_youtube_id) != len(youtube_ids):
 		raise HTTPException(status_code=400, detail="Refresh videos before selecting")
 
-	# Fetch fresh stats from YouTube for the selected videos.
-	access_token = _get_access_token(db, user_id)
-	details = _video_details(access_token, youtube_ids)
-	if len(details) != len(youtube_ids):
-		raise HTTPException(status_code=404, detail="One or more YouTube videos were not found")
-
-	for youtube_video_id, video_data in details.items():
-		description = descriptions[youtube_video_id]
-		if video_data["description_required"]:
-			if not description:
-				raise HTTPException(
-					status_code=400,
-					detail="Provide a description for videos without a YouTube description",
-				)
-		if description:
-			video_data["description"] = description[:800]
-			video_data["description_required"] = False
-
-	# Everything is validated, so now remove videos that were deselected.
+	# The catalog was created by GET /selection-videos/{channel_id}.  Saving a
+	# selection must remain a local database operation: calling YouTube again
+	# here can delay the request or fail after the user has already chosen a
+	# catalog video.
 	_remove_deselected_videos(db, user_id, target, youtube_ids)
 
 	saved_videos = []
 	for youtube_video_id in youtube_ids:
-		video_data = details[youtube_video_id]
 		video = catalog_by_youtube_id[youtube_video_id]
-		video.title = video_data["title"]
 
-		# Get-or-create the selection row, then refresh its stats.
+		# Get-or-create the selection row. Existing metadata is preserved until
+		# the next catalog/monitor refresh; a new selection starts at zero.
 		selected = (
 			db.query(TargetVideo)
 			.filter_by(user_id=user_id, video_id=video.video_id)
@@ -360,16 +397,41 @@ def save_selected_videos(
 		if selected is None:
 			selected = TargetVideo(user_id=user_id, video_id=video.video_id)
 			db.add(selected)
+
+		# Persist the latest channel context and any description the user picked
+		# for this monitored video. This keeps the selected-video view consistent
+		# even when the catalog has been refreshed or the user saves a new choice.
 		selected.channel_name = channel.channel_name
-		selected.views = video_data["views"]
-		selected.likes = video_data["likes"]
-		selected.comments = video_data["comments"]
-		selected.description = video_data["description"]
+		selected.views = selected.views or 0
+		selected.likes = selected.likes or 0
+		selected.comments = selected.comments or 0
+
+		description = descriptions[youtube_video_id]
+		if description:
+			selected.description = description
+		elif selected.description is None:
+			selected.description = ""
+
 		saved_videos.append(
 			VideoResponse(
-				**video_data, selected=True, channel_name=channel.channel_name
+				youtube_video_id=video.youtube_video_id,
+				title=video.title or "",
+				description=selected.description or "",
+				views=selected.views or 0,
+				likes=selected.likes or 0,
+				comments=selected.comments or 0,
+				selected=True,
+				description_required=False,
+				channel_name=channel.channel_name,
 			)
 		)
 
 	db.commit()
+	logger.info(
+		"Monitored video selected: user_id=%s youtube_channel_id=%s "
+		"youtube_video_id=%s",
+		user_id,
+		channel.youtube_channel_id,
+		youtube_ids[0],
+	)
 	return saved_videos

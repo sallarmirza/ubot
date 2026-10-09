@@ -32,5 +32,5 @@ def save_selected_videos(
 	db: Session = Depends(db_manager.get_db),
 	user: User = Depends(get_current_user),
 ):
-	"""Save selected videos with fresh YouTube metadata."""
+	"""Persist selections from the local video catalog."""
 	return selection_video_service.save_selected_videos(db, user.user_id, payload)

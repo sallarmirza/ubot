@@ -104,7 +104,14 @@ def save_reply_draft(db: Session, comment: Comments, ai_reply: str) -> None:
 
 
 def claim_reply_posting(db: Session, comment_id: int) -> bool:
-	"""Atomically claim a draft so only one server process can post it."""
+	"""Atomically claim a draft so only one server process can post it.
+
+	This is the anti-duplicate guard: if another request already marked the
+	comment as replied or is currently posting it, this update will fail and the
+	caller must stop rather than posting the same reply twice.
+	"""
+	# Only the exact draft state is eligible for a claim. A live reply already
+	# recorded on YouTube or a partially completed post should never be retried.
 	result = db.execute(
 		update(Comments)
 		.where(
@@ -148,6 +155,8 @@ def mark_reply_posting_unknown(db: Session, comment_id: int) -> None:
 def mark_reply_posted(
 	db: Session, comment: Comments, youtube_reply_id: str
 ) -> None:
+	# This is the final confirmation step. Once YouTube returns a real reply ID,
+	# we persist the canonical "posted" state and block any retries.
 	if not youtube_reply_id or len(youtube_reply_id) > 100:
 		raise ValueError("YouTube reply ID is empty or exceeds the database limit")
 	if comment.is_replied:

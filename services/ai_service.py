@@ -394,8 +394,9 @@ def regenerate_reply_draft(
 	)
 	if comment is None:
 		raise HTTPException(status_code=404, detail="Top-level comment not found")
-	# A reply that is already live on YouTube can't be redrafted.
-	if comment.is_replied:
+	# A comment is final once the DB confirms a real YouTube reply. We block any
+	# redraft attempt so the same viewer comment cannot be answered twice.
+	if comment.is_replied or comment.reply_status == "posted":
 		raise HTTPException(status_code=409, detail="A reply has already been posted")
 	if comment.reply_status in {"posting", "unknown"}:
 		raise HTTPException(
@@ -438,7 +439,10 @@ def post_video_comment_reply(
 	)
 	if comment is None:
 		raise HTTPException(status_code=404, detail="Top-level comment not found")
-	if comment.is_replied:
+	# The duplicate check must cover both the boolean flag and the confirmed
+	# posted status, because a stale or partially synced row can still be
+	# treated as eligible unless both states are blocked.
+	if comment.is_replied or comment.reply_status == "posted":
 		raise HTTPException(status_code=409, detail="A reply has already been posted")
 	if not comment.ai_reply:
 		raise HTTPException(
@@ -535,3 +539,84 @@ def post_video_comment_reply(
 		"is_replied": True,
 		"reply_status": "posted",
 	}
+
+
+def generate_and_post_video_replies(
+	db: Session,
+	user_id: int,
+	channel_id: str,
+	video_id: str,
+) -> dict:
+	"""Generate and publish replies for this selected video's top-level comments."""
+	selected_video = _get_selected_video(db, user_id, channel_id, video_id)
+	comments = ai_repo.get_top_level_comments(db, selected_video.selected_video_id)
+	summary = {
+		"total": len(comments),
+		"attempted": 0,
+		"posted": 0,
+		"failed": 0,
+		"failures": [],
+	}
+
+	for comment in comments:
+		# A comment is finished once the database records a real response on
+		# YouTube, even if the boolean flag is stale. This prevents duplicate
+		# automatic posting in multi-request or retry scenarios.
+		if comment.is_replied or comment.reply_status == "posted":
+			continue
+
+		comment_id = comment.youtube_comment_id
+		summary["attempted"] += 1
+		try:
+			# A previous request may still be posting or may have reached YouTube
+			# without receiving its response. Never retry those outcomes blindly.
+			if comment.reply_status in {"posting", "unknown"}:
+				raise HTTPException(
+					status_code=409,
+					detail="Reply posting is in progress or uncertain; check YouTube before retrying",
+				)
+
+			# The existing draft generator builds the same business/video context,
+			# validates the AI text, and saves a draft for the posting claim.
+			draft = regenerate_reply_draft(
+				db, user_id, channel_id, video_id, comment_id
+			)
+			if not (draft["ai_reply"] or "").strip():
+				raise HTTPException(status_code=502, detail="AI reply was empty")
+
+			# This service claims the draft atomically, posts to YouTube, then
+			# commits is_replied and the final reply only after confirmation.
+			post_video_comment_reply(db, user_id, channel_id, video_id, comment_id)
+		except HTTPException as error:
+			db.rollback()
+			summary["failed"] += 1
+			summary["failures"].append(
+				{"youtube_comment_id": comment_id, "detail": str(error.detail)}
+			)
+			logger.warning(
+				"Auto reply failed: user_id=%s channel_id=%s video_id=%s "
+				"youtube_comment_id=%s status=%s",
+				user_id, channel_id, video_id, comment_id, error.status_code,
+			)
+			continue
+		except Exception:
+			db.rollback()
+			summary["failed"] += 1
+			summary["failures"].append(
+				{"youtube_comment_id": comment_id, "detail": "Unable to process reply"}
+			)
+			logger.exception(
+				"Unexpected auto reply failure: user_id=%s channel_id=%s "
+				"video_id=%s youtube_comment_id=%s status=failed",
+				user_id, channel_id, video_id, comment_id,
+			)
+			continue
+
+		summary["posted"] += 1
+		logger.info(
+			"Auto reply posted: user_id=%s channel_id=%s video_id=%s "
+			"youtube_comment_id=%s status=posted",
+			user_id, channel_id, video_id, comment_id,
+		)
+
+	return summary
