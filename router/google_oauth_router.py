@@ -1,4 +1,5 @@
 import secrets
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -43,17 +44,17 @@ def google_callback(
     db: Session = Depends(db_manager.get_db),
 ):
     """Google sends the user back here: verify state, save tokens, set the JWT cookie."""
-    # frontend_page = settings.FRONTEND_URL or f"{str(request.base_url).rstrip('/')}/test/test.html"
-    # TEMP debug: show what the callback request actually carries
-    print("HOST:", request.headers.get("host"))
-    print("COOKIE HEADER:", request.headers.get("cookie"))
-    print("URL:", request.url)
+
+    frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else str(request.base_url).rstrip("/")
+
     def failed(reason: str) -> RedirectResponse:
-        return RedirectResponse(f"{settings.FRONTEND_URL}?error=oauth_failed&reason={reason}")
+        return RedirectResponse(
+            f"{frontend_url}/test-demo?{urlencode({'auth': 'failed', 'reason': reason})}"
+        )
 
     saved_state = request.cookies.get(STATE_COOKIE)
     if error:
-        return failed("provider_denied")
+        return failed("access_denied" if error == "access_denied" else "provider_denied")
     if not code:
         return failed("missing_code")
     if not state:
@@ -64,7 +65,7 @@ def google_callback(
         return failed("state_mismatch")
 
     try:
-        user_id = auth_service.login_with_google(db, code)
+        user_id, channel_id = auth_service.login_with_google(db, code)
     except GoogleOAuthError as exc:
         db.rollback()
         if str(exc).startswith("Token Exchange failed:"):
@@ -75,6 +76,10 @@ def google_callback(
 
     # Success: set the JWT on the same response we return, and clear the temporary state cookie
     response = RedirectResponse(settings.FRONTEND_URL)
+
+    response = RedirectResponse(
+        f"{frontend_url}/dashboard/{channel_id}?{urlencode({'auth': 'success'})}"
+    )
     set_auth_cookie(response, create_access_token(user_id))
     response.delete_cookie(STATE_COOKIE)
     return response

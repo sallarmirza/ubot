@@ -15,8 +15,8 @@ router = APIRouter(prefix="/comments", tags=["comments"])
 def get_comments(
 	channel_id: str,
 	video_id: str,
-	max_comments: int = Query(100, ge=1, le=100),
-	max_replies: int = Query(50, ge=0, le=200),
+	max_comments: int = Query(50, ge=1, le=100),
+	max_replies: int = Query(0, ge=0, le=5),
 	db: Session = Depends(db_manager.get_db),
 	user: User = Depends(get_current_user),
 ):

@@ -36,7 +36,8 @@ class SelectedVideosRequest(BaseModel):
 	model_config = ConfigDict(extra="forbid")
 
 	channel_id: str = Field(min_length=1, max_length=100)
-	videos: list[SelectedVideoInput] = Field(max_length=500)
+	# A channel has exactly one active monitored video.
+	videos: list[SelectedVideoInput] = Field(min_length=1, max_length=1)
 
 	@field_validator("videos")
 	@classmethod
