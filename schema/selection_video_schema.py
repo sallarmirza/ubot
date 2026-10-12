@@ -8,6 +8,7 @@ class VideoResponse(BaseModel):
 
 	youtube_video_id: str = Field(min_length=1, max_length=50)
 	title: str = Field(default="", max_length=255)
+	channel_name: str = Field(default="", max_length=255)
 	description: str = Field(default="", max_length=800)
 	views: int = Field(default=0, ge=0)
 	likes: int = Field(default=0, ge=0)

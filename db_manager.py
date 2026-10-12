@@ -1,9 +1,12 @@
 # app/db_manager.py
 import os
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, event,inspect,text
 from sqlalchemy.orm import sessionmaker
+
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 Base = declarative_base()
 
@@ -47,6 +50,7 @@ class DBManager:
             cursor.close()
 
     def create_tables(self):
+
         import db_model  # models register karne ke liye
         db_model.Base.metadata.create_all(bind=self.engine)
         migrations = {
@@ -80,8 +84,10 @@ class DBManager:
             )
 
     def drop_tables(self):
+
         import db_model
-        db_model.Base.metadata.drop_all(bind=self.engine)
+
+        db_model.Base.metadata.create_all(bind=self.engine)
 
     def get_db(self):
         db = self.SessionLocal()

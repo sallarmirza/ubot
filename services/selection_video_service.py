@@ -237,15 +237,20 @@ def _remove_deselected_videos(
 
 def _cached_channel_videos(
 	db: Session, user_id: int, channel: YoutubeChannel, limit: int
-) -> list[VideoResponse]:
-	"""Return an existing catalog without making the page render wait on Google."""
+) -> list[VideoResponse] | None:
+	"""Return an existing catalog without making the page render wait on Google.
+
+	Returns None when there is no cached catalog at all (so the caller knows to
+	fetch from YouTube). An empty list is a *valid* cached result: the channel
+	simply has no stored videos yet.
+	"""
 	target = (
 		db.query(TargetChannel)
 		.filter_by(user_id=user_id, channel_id=channel.channel_id)
 		.first()
 	)
 	if target is None:
-		return []
+		return None
 
 	videos = (
 		db.query(Videos)
@@ -255,7 +260,7 @@ def _cached_channel_videos(
 		.all()
 	)
 	if not videos:
-		return []
+		return None
 
 	selected_by_video_id = {
 		selection.video_id: selection
@@ -290,9 +295,17 @@ def _cached_channel_videos(
 def list_channel_videos(
 	db: Session, user_id: int, channel_id: str, limit: int = DEFAULT_VIDEO_LIMIT
 ) -> list[VideoResponse]:
+	# Clamp the caller-supplied limit into a sane range. Without this, a huge
+	# limit would page through YouTube indefinitely.
+	if limit < 0:
+		limit = DEFAULT_VIDEO_LIMIT
+	limit = min(limit, MAX_VIDEO_LIMIT)
+	if limit == 0:
+		return []
+
 	channel = _get_channel(db, user_id, channel_id)
 	cached_videos = _cached_channel_videos(db, user_id, channel, limit)
-	if cached_videos:
+	if cached_videos is not None:
 		return cached_videos
 
 	access_token = _get_access_token(db, user_id)
@@ -330,6 +343,7 @@ def list_channel_videos(
 				),
 			},
 			selected=video["youtube_video_id"] in selected_descriptions,
+			channel_name=channel.channel_name,
 		)
 		for video in videos
 	]
@@ -396,12 +410,14 @@ def save_selected_videos(
 		if selected is None:
 			selected = TargetVideo(user_id=user_id, video_id=video.video_id)
 			db.add(selected)
-
-		description = descriptions[youtube_video_id]
-		if description:
-			selected.description = description
-		elif selected.description is None:
-			selected.description = ""
+			# A brand-new selection starts with zeroed statistics; the next
+			# monitor refresh will populate them.
+			selected.views = 0
+			selected.likes = 0
+			selected.comments = 0
+		# The description always comes from the user's selection payload,
+		# not from the catalog (which only stores title metadata).
+		selected.description = descriptions.get(youtube_video_id, "")
 
 		saved_videos.append(
 			VideoResponse(
@@ -412,7 +428,8 @@ def save_selected_videos(
 				likes=selected.likes or 0,
 				comments=selected.comments or 0,
 				selected=True,
-				description_required=False,
+				description_required=not (selected.description or "").strip(),
+				channel_name=channel.channel_name,
 			)
 		)
 
