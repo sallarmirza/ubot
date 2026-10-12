@@ -103,6 +103,7 @@ def save_selected_video(
 	if selected is None:
 		selected = TargetVideo(user_id=user_id, video_id=video.video_id)
 		db.add(selected)
+	selected.channel_name = video.target_channel.channel.channel_name
 	selected.views = video_data["views"]
 	selected.likes = video_data["likes"]
 	selected.comments = video_data["comments"]
