@@ -81,7 +81,7 @@ def save_fetched_comments(
 	if not comment_data:
 		return []
 
-	comment_ids = [youtube_comment_id for youtube_comment_id, _, _ in comment_data]
+	comment_ids = [item[0] for item in comment_data]
 	if len(comment_ids) != len(set(comment_ids)):
 		raise ValueError("Fetched comments contain duplicate YouTube comment IDs")
 
@@ -97,7 +97,12 @@ def save_fetched_comments(
 	video_name = _get_video_name(db, selected_video_id)
 
 	saved_comments = []
-	for youtube_comment_id, comment_text, parent_youtube_comment_id in comment_data:
+	for (
+		youtube_comment_id,
+		comment_text,
+		parent_youtube_comment_id,
+		author_channel_id,
+	) in comment_data:
 		comment = by_youtube_id.get(youtube_comment_id)
 		parent_comment = (
 			by_youtube_id[parent_youtube_comment_id]
@@ -109,6 +114,7 @@ def save_fetched_comments(
 				selected_video_id=selected_video_id,
 				youtube_comment_id=youtube_comment_id,
 				comment_text=comment_text,
+				author_channel_id=author_channel_id,
 				video_name=video_name,
 				parent_comment=parent_comment,
 			)
@@ -116,6 +122,7 @@ def save_fetched_comments(
 			by_youtube_id[youtube_comment_id] = comment
 		else:
 			comment.comment_text = comment_text
+			comment.author_channel_id = author_channel_id
 			comment.video_name = video_name
 			comment.parent_comment = parent_comment
 		saved_comments.append(comment)
@@ -139,7 +146,7 @@ def delete_comment(
 
 def _flatten_fetched_comments(
 	comments: Sequence[Mapping[str, object]],
-) -> list[tuple[str, str, str | None]]:
+) -> list[tuple[str, str, str | None, str | None]]:
 	flattened = []
 
 	def visit(
@@ -149,9 +156,14 @@ def _flatten_fetched_comments(
 		for item in items:
 			if not isinstance(item, Mapping):
 				raise ValueError("Fetched comment must be a mapping")
-			youtube_comment_id, comment_text = _comment_fields(item)
+			youtube_comment_id, comment_text, author_channel_id = _comment_fields(item)
 			flattened.append(
-				(youtube_comment_id, comment_text, parent_youtube_comment_id)
+				(
+					youtube_comment_id,
+					comment_text,
+					parent_youtube_comment_id,
+					author_channel_id,
+				)
 			)
 			replies = item.get("replies", [])
 			if not isinstance(replies, Sequence) or isinstance(replies, (str, bytes)):
@@ -162,16 +174,21 @@ def _flatten_fetched_comments(
 	return flattened
 
 
-def _comment_fields(comment: Mapping[str, object]) -> tuple[str, str]:
+def _comment_fields(
+	comment: Mapping[str, object],
+) -> tuple[str, str, str | None]:
 	youtube_comment_id = comment.get("youtube_comment_id")
 	comment_text = comment.get("text")
+	author_channel_id = comment.get("author_channel_id")
 	if not isinstance(youtube_comment_id, str) or not youtube_comment_id:
 		raise ValueError("Fetched comment is missing a YouTube comment ID")
 	if not isinstance(comment_text, str):
 		raise ValueError("Fetched comment text must be a string")
+	if author_channel_id is not None and not isinstance(author_channel_id, str):
+		raise ValueError("Fetched comment author channel ID must be a string")
 	_validate_youtube_comment_id(youtube_comment_id)
 	_validate_comment_text(comment_text)
-	return youtube_comment_id, comment_text
+	return youtube_comment_id, comment_text, author_channel_id
 
 
 def _validate_youtube_comment_id(youtube_comment_id: str) -> None:

@@ -237,11 +237,29 @@ async def generate_video_reply_drafts(
 	prompt_context = _build_prompt_context(db, user_id, selected_video)
 
 	# 2) Load the comments saved earlier by the comment-fetching step.
-	comments = ai_repo.get_top_level_comments(db, selected_video.selected_video_id)
-	if not comments:
+	all_comments = ai_repo.get_video_comments(db, selected_video.selected_video_id)
+	comments_with_replies = {
+		comment.parent_comment_id
+		for comment in all_comments
+		if comment.parent_comment_id is not None
+	}
+	# Keep draft pagination aligned with the leaf-only auto-reply policy, so the
+	# UI doesn't generate drafts for top-level comments that already have replies.
+	comments = [
+		comment
+		for comment in all_comments
+		if comment.parent_comment_id is None
+		and comment.comment_id not in comments_with_replies
+	]
+	if not all_comments:
 		raise HTTPException(
 			status_code=400,
 			detail="Fetch comments for this video before generating drafts",
+		)
+	if not comments:
+		raise HTTPException(
+			status_code=400,
+			detail="No top-level comments without replies are available for drafts",
 		)
 
 	# 3) Process a stable page ordered by our internal comment ID.
@@ -389,12 +407,18 @@ def regenerate_reply_draft(
 ) -> dict:
 	"""Replace the existing draft of ONE comment with a fresh AI draft."""
 	selected_video = _get_selected_video(db, user_id, channel_id, video_id)
-	comment = ai_repo.get_top_level_comment(
+	comment = ai_repo.get_comment(
 		db, selected_video.selected_video_id, youtube_comment_id
 	)
 	if comment is None:
-		raise HTTPException(status_code=404, detail="Top-level comment not found")
-	# A reply that is already live on YouTube can't be redrafted.
+		raise HTTPException(status_code=404, detail="Comment not found")
+	# Only leaf comments are eligible; a source with children already has a
+	# response in the thread and must not receive another one.
+	if ai_repo.has_replies(db, comment.comment_id):
+		raise HTTPException(status_code=409, detail="This comment already has replies")
+	# Never generate replies to messages written by this channel.
+	if comment.author_channel_id == channel_id:
+		raise HTTPException(status_code=409, detail="Cannot reply to your own channel comment")
 	if comment.is_replied:
 		raise HTTPException(status_code=409, detail="A reply has already been posted")
 	if comment.reply_status in {"posting", "unknown"}:
@@ -433,11 +457,17 @@ def post_video_comment_reply(
 ) -> dict:
 	"""Post one saved draft reply to YouTube as a real reply."""
 	selected_video = _get_selected_video(db, user_id, channel_id, video_id)
-	comment = ai_repo.get_top_level_comment(
+	comment = ai_repo.get_comment(
 		db, selected_video.selected_video_id, youtube_comment_id
 	)
 	if comment is None:
-		raise HTTPException(status_code=404, detail="Top-level comment not found")
+		raise HTTPException(status_code=404, detail="Comment not found")
+	# Recheck leaf status at post time, since another reply may have appeared
+	# after this draft was generated.
+	if ai_repo.has_replies(db, comment.comment_id):
+		raise HTTPException(status_code=409, detail="This comment already has replies")
+	if comment.author_channel_id == channel_id:
+		raise HTTPException(status_code=409, detail="Cannot reply to your own channel comment")
 	if comment.is_replied:
 		raise HTTPException(status_code=409, detail="A reply has already been posted")
 	if not comment.ai_reply:
@@ -474,7 +504,13 @@ def post_video_comment_reply(
 			auth=_BearerAuth(access_token),
 			json={
 				"snippet": {
-					"parentId": youtube_comment_id,
+					# YouTube does not support nested replies: when the source
+					# is a reply, publish our response under its top-level thread.
+					"parentId": (
+						comment.parent_comment.youtube_comment_id
+						if comment.parent_comment is not None
+						else comment.youtube_comment_id
+					),
 					"textOriginal": reply_text,
 				}
 			},
@@ -535,3 +571,121 @@ def post_video_comment_reply(
 		"is_replied": True,
 		"reply_status": "posted",
 	}
+
+
+def generate_and_post_video_replies(
+	db: Session,
+	user_id: int,
+	channel_id: str,
+	video_id: str,
+) -> dict:
+	"""Reply once to every fetched viewer comment that has no replies of its own.
+
+	YouTube represents replies as siblings in a thread, so only the stored
+	top-level comment can have children. A top-level comment with children is
+	skipped; each individual viewer reply is evaluated as a leaf.
+	"""
+	selected_video = _get_selected_video(db, user_id, channel_id, video_id)
+	comments = ai_repo.get_comments(db, selected_video.selected_video_id)
+	comments_with_replies = {
+		comment.parent_comment_id
+		for comment in comments
+		if comment.parent_comment_id is not None
+	}
+	tracked_reply_ids = {
+		comment.youtube_reply_id
+		for comment in comments
+		if comment.youtube_reply_id
+	}
+	summary = {
+		"total": len(comments),
+		"attempted": 0,
+		"posted": 0,
+		"skipped": 0,
+		"failed": 0,
+		"failures": [],
+	}
+
+	for comment in comments:
+		# A comment with children is not a leaf; do not reply to its parent
+		# when viewers have already continued the conversation underneath it.
+		if comment.comment_id in comments_with_replies:
+			summary["skipped"] += 1
+			continue
+
+		# Ignore our own channel messages and any bot reply known from a prior
+		# posting operation. This protects the worker from answering itself.
+		if (
+			comment.author_channel_id == channel_id
+			or comment.youtube_comment_id in tracked_reply_ids
+		):
+			summary["skipped"] += 1
+			continue
+
+		# Durable status and the atomic posting claim ensure each source comment
+		# is answered no more than once, including after worker retries.
+		if comment.is_replied or comment.reply_status == "posted":
+			summary["skipped"] += 1
+			continue
+
+		comment_id = comment.youtube_comment_id
+		summary["attempted"] += 1
+		try:
+			if comment.reply_status in {"posting", "unknown"}:
+				raise HTTPException(
+					status_code=409,
+					detail="Reply posting is in progress or uncertain; check YouTube before retrying",
+				)
+
+			draft = regenerate_reply_draft(
+				db, user_id, channel_id, video_id, comment_id
+			)
+			if not (draft["ai_reply"] or "").strip():
+				raise HTTPException(status_code=502, detail="AI reply was empty")
+
+			post_video_comment_reply(
+				db, user_id, channel_id, video_id, comment_id
+			)
+		except HTTPException as error:
+			db.rollback()
+			summary["failed"] += 1
+			summary["failures"].append(
+				{"youtube_comment_id": comment_id, "detail": error.detail}
+			)
+			logger.warning(
+				"Auto reply failed: user_id=%s channel_id=%s video_id=%s "
+				"youtube_comment_id=%s status=%s",
+				user_id,
+				channel_id,
+				video_id,
+				comment_id,
+				error.status_code,
+			)
+			continue
+		except Exception:
+			db.rollback()
+			summary["failed"] += 1
+			summary["failures"].append(
+				{"youtube_comment_id": comment_id, "detail": "Unable to process reply"}
+			)
+			logger.exception(
+				"Unexpected auto reply failure: user_id=%s channel_id=%s "
+				"video_id=%s youtube_comment_id=%s",
+				user_id,
+				channel_id,
+				video_id,
+				comment_id,
+			)
+			continue
+
+		summary["posted"] += 1
+		logger.info(
+			"Auto reply posted: user_id=%s channel_id=%s video_id=%s "
+			"youtube_comment_id=%s",
+			user_id,
+			channel_id,
+			video_id,
+			comment_id,
+		)
+
+	return summary

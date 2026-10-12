@@ -181,6 +181,8 @@ class Comments(Base):
 
     # The comment's ID on YouTube (e.g. "UgxABC..."), used when posting replies.
     youtube_comment_id = Column(String(100), nullable=False)
+    # Identifies comments written by the channel so polling never answers itself.
+    author_channel_id = Column(String(100), nullable=True)
 
     # The text written by the viewer (cut to 800 characters to fit the column).
     comment_text = Column(String(800), nullable=False)

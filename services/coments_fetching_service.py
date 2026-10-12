@@ -69,6 +69,11 @@ def _format_comment(item: dict) -> dict:
 	return {
 		"youtube_comment_id": item.get("id", ""),
 		"author_name": snippet.get("authorDisplayName", ""),
+		"author_channel_id": (
+			snippet.get("authorChannelId", {}).get("value")
+			if isinstance(snippet.get("authorChannelId"), dict)
+			else None
+		),
 		# Truncate long comments to 800 characters (likely a DB column limit).
 		"text": snippet.get("textDisplay", "")[:800],
 		"published_at": snippet.get("publishedAt", ""),
@@ -78,14 +83,18 @@ def _format_comment(item: dict) -> dict:
 	}
 
 
-def _get_replies(access_token: str, parent_id: str, max_replies: int = DEFAULT_MAX_REPLIES) -> list[dict]:
+def _get_replies(
+	access_token: str,
+	parent_id: str,
+	max_replies: int | None = DEFAULT_MAX_REPLIES,
+) -> list[dict]:
 	"""Fetch replies for one top-level comment, up to max_replies."""
 	replies = []
 	page_token = None
 
 	# Keep requesting pages until we have enough replies or run out of pages.
-	while len(replies) < max_replies:
-		remaining = max_replies - len(replies)
+	while max_replies is None or len(replies) < max_replies:
+		remaining = 100 if max_replies is None else max_replies - len(replies)
 		params = {
 			"part": "snippet",
 			"parentId": parent_id,
@@ -106,22 +115,22 @@ def _get_replies(access_token: str, parent_id: str, max_replies: int = DEFAULT_M
 			break
 
 	# Safety: never return more than the requested limit.
-	return replies[:max_replies]
+	return replies if max_replies is None else replies[:max_replies]
 
 
 def _get_all_comments(
 	access_token: str,
 	video_id: str,
-	max_comments: int = DEFAULT_MAX_COMMENTS,
-	max_replies: int = DEFAULT_MAX_REPLIES,
+	max_comments: int | None = DEFAULT_MAX_COMMENTS,
+	max_replies: int | None = DEFAULT_MAX_REPLIES,
 ) -> list[dict]:
 	"""Fetch top-level comments (and their replies) up to the given limits."""
 	comments = []
 	page_token = None
 
 	# Keep requesting pages of comment threads until the limit is reached.
-	while len(comments) < max_comments:
-		remaining = max_comments - len(comments)
+	while max_comments is None or len(comments) < max_comments:
+		remaining = 100 if max_comments is None else max_comments - len(comments)
 		params = {
 			# "snippet" gives the top-level comment; "replies" gives a few
 			# preview replies for each thread.
@@ -139,7 +148,7 @@ def _get_all_comments(
 
 		for thread in page.get("items", []):
 			# Stop mid-page if we've already hit the limit.
-			if len(comments) >= max_comments:
+			if max_comments is not None and len(comments) >= max_comments:
 				break
 
 			thread_snippet = thread.get("snippet", {})
@@ -151,13 +160,29 @@ def _get_all_comments(
 
 			# QUOTA SAVING: the commentThreads response already includes a few
 			# replies (up to 5) for each thread, so reuse them for free.
-			embedded = thread.get("replies", {}).get("comments", [])
-			comment["replies"] = [_format_comment(r) for r in embedded][:max_replies]
+			reply_data = thread.get("replies", {})
+			embedded = (
+				reply_data.get("comments", [])
+				if isinstance(reply_data, dict)
+				else []
+			)
+			if not isinstance(embedded, list):
+				embedded = []
+			reply_preview = (
+				embedded
+				if max_replies is None
+				else embedded[:max_replies]
+			)
+			comment["replies"] = [
+				_format_comment(reply)
+				for reply in reply_preview
+				if isinstance(reply, dict)
+			]
 
-			# Make the extra (quota-costing) replies request ONLY when:
-			#  - we have a valid parent ID (an empty ID would make YouTube fail), and
-			#  - the embedded replies are fewer than what we want and what exists.
-			wanted = min(total_replies, max_replies)
+			# A thread response embeds only a small reply preview. The scheduled
+			# poller passes max_replies=None to fetch every reply page; the UI
+			# keeps its configured limit to avoid unbounded interactive requests.
+			wanted = total_replies if max_replies is None else min(total_replies, max_replies)
 			if parent_id and len(comment["replies"]) < wanted:
 				comment["replies"] = _get_replies(
 					access_token, parent_id, max_replies
@@ -166,7 +191,9 @@ def _get_all_comments(
 
 		# No next page token means there are no more comment threads.
 		page_token = page.get("nextPageToken")
-		if not page_token:
+		if not page_token or (
+			max_comments is not None and len(comments) >= max_comments
+		):
 			break
 
 	# Return only after the loop has finished, so every page is collected
@@ -179,8 +206,8 @@ def fetch_video_comments(
 	user_id: int,
 	channel_id: str,
 	video_id: str,
-	max_comments: int = DEFAULT_MAX_COMMENTS,
-	max_replies: int = DEFAULT_MAX_REPLIES,
+	max_comments: int | None = DEFAULT_MAX_COMMENTS,
+	max_replies: int | None = DEFAULT_MAX_REPLIES,
 ) -> list[dict]:
 	"""Fetch comments only for a video selected by this user's channel.
 
@@ -198,7 +225,8 @@ def fetch_video_comments(
 	# Get a valid Google access token (refreshed automatically if expired).
 	access_token = _get_access_token(db, user_id)
 
-	# Fetch first, then persist the complete top-level result for this selected video.
+	# `None` means the scheduled worker must fetch every API page; regular UI
+	# requests retain their bounded defaults to keep loading time predictable.
 	comments = _get_all_comments(
 		access_token,
 		video_id,

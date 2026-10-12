@@ -34,6 +34,15 @@ AI reply code is separated into `router/ai_router.py`, `services/ai_service.py`,
 and `repositories/ai_repo.py`. Comment loading remains under the comments
 router and service.
 
+The application polls all selected videos every five minutes. Each poll fetches
+all pages of top-level comments and their replies, then processes only viewer
+comments that have no replies of their own. A top-level comment with replies is
+skipped; each viewer reply is checked individually. Because YouTube does not
+support nested replies, a response to a viewer reply is posted as a sibling
+reply in that thread. The worker skips the channel's own comments and uses the
+saved per-comment posting state to avoid duplicate replies. Run one application
+worker to avoid starting duplicate pollers.
+
 ## Selected-video analytics
 
 The authenticated `GET /analytics/selected-videos` endpoint returns current

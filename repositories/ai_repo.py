@@ -61,6 +61,37 @@ def get_top_level_comments(db: Session, selected_video_id: int) -> list[Comments
 	)
 
 
+def get_comments(db: Session, selected_video_id: int) -> list[Comments]:
+	"""Return top-level comments and all fetched replies in stable order."""
+	return (
+		db.query(Comments)
+		.filter_by(selected_video_id=selected_video_id)
+		.order_by(Comments.comment_id)
+		.all()
+	)
+
+
+def get_selected_videos_for_monitoring(db: Session) -> list[tuple[int, str, str]]:
+	"""List selected videos with the owner and YouTube channel needed to poll."""
+	rows = (
+		db.query(
+			YoutubeChannel.user_id,
+			YoutubeChannel.youtube_channel_id,
+			Videos.youtube_video_id,
+		)
+		.join(TargetChannel, TargetChannel.channel_id == YoutubeChannel.channel_id)
+		.join(Videos, Videos.target_channel_id == TargetChannel.target_channel_id)
+		.join(TargetVideo, TargetVideo.video_id == Videos.video_id)
+		.filter(
+			TargetChannel.user_id == YoutubeChannel.user_id,
+			TargetVideo.user_id == YoutubeChannel.user_id,
+		)
+		.order_by(YoutubeChannel.user_id, Videos.video_id)
+		.all()
+	)
+	return [(row[0], row[1], row[2]) for row in rows]
+
+
 def get_video_comments(db: Session, selected_video_id: int) -> list[Comments]:
 	return (
 		db.query(Comments)
@@ -81,6 +112,31 @@ def get_top_level_comment(
 		)
 		.first()
 	)
+
+
+def get_comment(
+	db: Session, selected_video_id: int, youtube_comment_id: str
+) -> Comments | None:
+	"""Find either a top-level comment or a reply in this selected video."""
+	return (
+		db.query(Comments)
+		.filter_by(
+			selected_video_id=selected_video_id,
+			youtube_comment_id=youtube_comment_id,
+		)
+		.first()
+	)
+
+
+def has_replies(db: Session, comment_id: int) -> bool:
+	"""Return whether the comment has children and therefore is not a leaf."""
+	return (
+		db.query(Comments.comment_id)
+		.filter(Comments.parent_comment_id == comment_id)
+		.first()
+		is not None
+	)
+
 
 
 def save_reply_draft(db: Session, comment: Comments, ai_reply: str) -> None:

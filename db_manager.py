@@ -2,7 +2,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -26,6 +26,17 @@ class DBManager:
         import db_model
 
         db_model.Base.metadata.create_all(bind=self.engine)
+        # create_all does not add columns to existing databases; keep this
+        # additive migration so deployed comment tables gain author tracking.
+        columns = {
+            column["name"]
+            for column in inspect(self.engine).get_columns("comments")
+        }
+        if "author_channel_id" not in columns:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE comments ADD COLUMN author_channel_id VARCHAR(100)")
+                )
 
     def get_db(self):
         db = self.SessionLocal()
