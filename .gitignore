@@ -44,3 +44,7 @@ wheels/
 Thumbs.db
 
 ubot.db
+
+test
+test/test.html
+test/test_comment_monitoring.py

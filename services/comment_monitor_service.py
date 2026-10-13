@@ -7,12 +7,12 @@ from repositories import ai_repo
 from services import ai_service, coments_fetching_service
 
 
-COMMENT_FETCH_INTERVAL_SECONDS = 5 * 60
+COMMENT_FETCH_INTERVAL_SECONDS = 10
 logger = logging.getLogger(__name__)
 
 
 def run_comment_monitoring_cycle() -> None:
-	"""Fetch all selected-video threads and reply to eligible leaf comments."""
+	"""Fetch all selected-video threads and auto-reply to eligible comments."""
 	# Read the work list in a short session; don't hold a database connection
 	# while waiting on YouTube or the AI provider.
 	with db_manager.SessionLocal() as db:

@@ -26,8 +26,8 @@ class DBManager:
         import db_model
 
         db_model.Base.metadata.create_all(bind=self.engine)
-        # create_all does not add columns to existing databases; keep this
-        # additive migration so deployed comment tables gain author tracking.
+        # create_all does not add columns to existing databases; add new
+        # comment metadata columns so existing databases stay compatible.
         columns = {
             column["name"]
             for column in inspect(self.engine).get_columns("comments")
@@ -36,6 +36,11 @@ class DBManager:
             with self.engine.begin() as connection:
                 connection.execute(
                     text("ALTER TABLE comments ADD COLUMN author_channel_id VARCHAR(100)")
+                )
+        if "can_reply" not in columns:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE comments ADD COLUMN can_reply BOOLEAN")
                 )
 
     def get_db(self):

@@ -26,7 +26,8 @@ def get_channel_videos(
 	return selection_video_service.list_channel_videos(db, user.user_id, channel_id, limit)
 
 
-@router.post("/save", response_model=list[VideoResponse])
+@router.post("", response_model=list[VideoResponse])
+@router.post("/save", response_model=list[VideoResponse], include_in_schema=False)
 def save_selected_videos(
 	payload: SelectedVideosRequest,
 	db: Session = Depends(db_manager.get_db),

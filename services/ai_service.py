@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DRAFTS = 20
 # Our own safe limit for the length of a reply.
 MAX_REPLY_LENGTH = 800
+COMMENT_THREAD_CANNOT_REPLY_DETAIL = (
+	"This YouTube comment thread does not allow replies"
+)
 
 AI_CONCURRENCY = 5
 
@@ -103,7 +106,7 @@ def _build_ai_request(model: str, prompt_context: str, comment_text: str) -> dic
 	return {
 		"model": model,
 		# Higher temperature = more varied, less templated replies.
-		"temperature": 0.8,
+		"temperature": 0.2,
 		"messages": [
 			{
 				# System message: the rules the AI must follow,
@@ -393,6 +396,7 @@ def attach_saved_reply_state(
 			item["is_replied"] = saved.is_replied if saved else False
 			item["youtube_reply_id"] = saved.youtube_reply_id if saved else None
 			item["reply_status"] = saved.reply_status if saved else "draft"
+			item["can_reply"] = saved.can_reply if saved else item.get("can_reply")
 			attach(item.get("replies", []))
 
 	attach(comments)
@@ -412,10 +416,10 @@ def regenerate_reply_draft(
 	)
 	if comment is None:
 		raise HTTPException(status_code=404, detail="Comment not found")
-	# Only leaf comments are eligible; a source with children already has a
-	# response in the thread and must not receive another one.
-	if ai_repo.has_replies(db, comment.comment_id):
-		raise HTTPException(status_code=409, detail="This comment already has replies")
+	if comment.can_reply is False:
+		raise HTTPException(
+			status_code=409, detail=COMMENT_THREAD_CANNOT_REPLY_DETAIL
+		)
 	# Never generate replies to messages written by this channel.
 	if comment.author_channel_id == channel_id:
 		raise HTTPException(status_code=409, detail="Cannot reply to your own channel comment")
@@ -462,10 +466,10 @@ def post_video_comment_reply(
 	)
 	if comment is None:
 		raise HTTPException(status_code=404, detail="Comment not found")
-	# Recheck leaf status at post time, since another reply may have appeared
-	# after this draft was generated.
-	if ai_repo.has_replies(db, comment.comment_id):
-		raise HTTPException(status_code=409, detail="This comment already has replies")
+	if comment.can_reply is False:
+		raise HTTPException(
+			status_code=409, detail=COMMENT_THREAD_CANNOT_REPLY_DETAIL
+		)
 	if comment.author_channel_id == channel_id:
 		raise HTTPException(status_code=409, detail="Cannot reply to your own channel comment")
 	if comment.is_replied:
@@ -530,6 +534,19 @@ def post_video_comment_reply(
 			response.status_code,
 			response.text[:500],
 		)
+		try:
+			reason = response.json()["error"]["errors"][0]["reason"]
+		except (KeyError, IndexError, TypeError, ValueError):
+			reason = None
+		if reason == "operationNotSupported":
+			ai_repo.release_reply_posting(db, comment.comment_id)
+			thread_root = comment.parent_comment or comment
+			thread_root.can_reply = False
+			comment.can_reply = False
+			db.commit()
+			raise HTTPException(
+				status_code=409, detail=COMMENT_THREAD_CANNOT_REPLY_DETAIL
+			)
 		if response.status_code >= 500:
 			ai_repo.mark_reply_posting_unknown(db, comment.comment_id)
 			detail = "YouTube's result is uncertain; check YouTube before retrying."
@@ -579,19 +596,14 @@ def generate_and_post_video_replies(
 	channel_id: str,
 	video_id: str,
 ) -> dict:
-	"""Reply once to every fetched viewer comment that has no replies of its own.
+	"""Reply once to every fetched viewer comment and reply.
 
 	YouTube represents replies as siblings in a thread, so only the stored
-	top-level comment can have children. A top-level comment with children is
-	skipped; each individual viewer reply is evaluated as a leaf.
+	top-level comment can have children. Replies to viewer replies are posted
+	as siblings under their top-level thread.
 	"""
 	selected_video = _get_selected_video(db, user_id, channel_id, video_id)
 	comments = ai_repo.get_comments(db, selected_video.selected_video_id)
-	comments_with_replies = {
-		comment.parent_comment_id
-		for comment in comments
-		if comment.parent_comment_id is not None
-	}
 	tracked_reply_ids = {
 		comment.youtube_reply_id
 		for comment in comments
@@ -605,11 +617,14 @@ def generate_and_post_video_replies(
 		"failed": 0,
 		"failures": [],
 	}
+	unreplyable_thread_ids = set()
 
 	for comment in comments:
-		# A comment with children is not a leaf; do not reply to its parent
-		# when viewers have already continued the conversation underneath it.
-		if comment.comment_id in comments_with_replies:
+		thread_id = comment.parent_comment_id or comment.comment_id
+		if (
+			getattr(comment, "can_reply", None) is False
+			or thread_id in unreplyable_thread_ids
+		):
 			summary["skipped"] += 1
 			continue
 
@@ -648,6 +663,8 @@ def generate_and_post_video_replies(
 			)
 		except HTTPException as error:
 			db.rollback()
+			if error.detail == COMMENT_THREAD_CANNOT_REPLY_DETAIL:
+				unreplyable_thread_ids.add(thread_id)
 			summary["failed"] += 1
 			summary["failures"].append(
 				{"youtube_comment_id": comment_id, "detail": error.detail}

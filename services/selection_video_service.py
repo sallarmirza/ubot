@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 
 import httpx
 from fastapi import HTTPException
@@ -18,6 +19,7 @@ MAX_VIDEO_LIMIT = 500
 # Refresh the Google token this long BEFORE it actually expires, so a token
 # that is about to expire is never used for a request.
 TOKEN_EXPIRY_MARGIN = timedelta(minutes=1)
+logger = logging.getLogger(__name__)
 
 
 def _get_channel(db: Session, user_id: int, channel_id: str) -> YoutubeChannel:
@@ -102,11 +104,48 @@ def _youtube_get(access_token: str, path: str, params: dict) -> dict:
 			timeout=20,
 		)
 	except httpx.RequestError as error:
+		logger.warning("YouTube %s request failed: %s", path, error)
 		raise HTTPException(status_code=502, detail="Could not reach YouTube") from error
 
 	if response.status_code != 200:
-		raise HTTPException(status_code=502, detail="YouTube API request failed")
-	return response.json()
+		try:
+			error_data = response.json().get("error", {})
+			reason = error_data.get("errors", [{}])[0].get("reason", "unknown")
+			message = error_data.get("message", "No error message returned")
+		except (AttributeError, IndexError, TypeError, ValueError):
+			reason = "unknown"
+			message = response.text[:300] or "No error message returned"
+
+		logger.warning(
+			"YouTube %s request returned HTTP %s (reason=%s): %s",
+			path,
+			response.status_code,
+			reason,
+			message[:300],
+		)
+		if reason in {"quotaExceeded", "dailyLimitExceeded"}:
+			raise HTTPException(
+				status_code=503,
+				detail="YouTube API quota is exhausted; try again after quota resets",
+			)
+		if reason in {"insufficientPermissions", "forbidden"}:
+			raise HTTPException(
+				status_code=403,
+				detail="Google access is missing YouTube permission; reconnect Google and grant the requested access",
+			)
+		if reason in {"authError", "invalidCredentials", "unauthorized"}:
+			raise HTTPException(status_code=401, detail="Sign in to Google again")
+		raise HTTPException(
+			status_code=502,
+			detail=f"YouTube API request failed ({reason}): {message[:200]}",
+		)
+	try:
+		return response.json()
+	except ValueError as error:
+		logger.warning("YouTube %s request returned invalid JSON", path)
+		raise HTTPException(
+			status_code=502, detail="YouTube returned an invalid response"
+		) from error
 
 
 def _count(statistics: dict, name: str) -> int:

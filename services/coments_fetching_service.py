@@ -154,6 +154,8 @@ def _get_all_comments(
 			thread_snippet = thread.get("snippet", {})
 			top_level = thread_snippet.get("topLevelComment", {})
 			comment = _format_comment(top_level)
+			can_reply = thread.get("canReply")
+			comment["can_reply"] = can_reply if isinstance(can_reply, bool) else None
 
 			parent_id = top_level.get("id", "")
 			total_replies = thread_snippet.get("totalReplyCount", 0)
@@ -178,6 +180,8 @@ def _get_all_comments(
 				for reply in reply_preview
 				if isinstance(reply, dict)
 			]
+			for reply in comment["replies"]:
+				reply["can_reply"] = comment["can_reply"]
 
 			# A thread response embeds only a small reply preview. The scheduled
 			# poller passes max_replies=None to fetch every reply page; the UI
@@ -187,6 +191,8 @@ def _get_all_comments(
 				comment["replies"] = _get_replies(
 					access_token, parent_id, max_replies
 				)
+				for reply in comment["replies"]:
+					reply["can_reply"] = comment["can_reply"]
 			comments.append(comment)
 
 		# No next page token means there are no more comment threads.

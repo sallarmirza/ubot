@@ -110,6 +110,15 @@
 		.analytics-record-list { list-style: none; padding: 0; margin: 0; }
 		#comments-panel { margin-top: 28px; }
 		#comments-status { color: #52645c; }
+		.auto-reply-notice {
+			margin: 14px 0;
+			padding: 14px 16px;
+			background: #e8f4ed;
+			border-left: 4px solid #16805e;
+			border-radius: 6px;
+			color: #284b3b;
+			line-height: 1.5;
+		}
 		.comment-list { list-style: none; padding: 0; margin: 12px 0; }
 		.comment-item { padding: 14px 0; border-top: 1px solid #e1e8e3; }
 		.comment-reply { margin-left: 24px; padding-left: 14px; border-left: 2px solid #dce5df; }
@@ -117,6 +126,7 @@
 		.comment-date { margin-left: 8px; color: #77857f; font-size: 12px; }
 		.comment-text { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 		.comment-likes { color: #60706a; font-size: 12px; }
+		.comment-unreplyable { color: #8a4b16; font-size: 12px; }
 		.ai-draft { padding: 10px; background: #f1f6f3; border-radius: 5px; white-space: pre-wrap; }
 		.comment-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 		.channel-select { grid-column: 1 / -1; justify-self: start; }
@@ -275,10 +285,22 @@
 			<p class="video-note">Descriptions are loaded from YouTube. Edit the text to update it, or add a description when YouTube has none. The full text shown is saved.</p>
 			<p id="video-status" role="status" aria-live="polite"></p>
 			<ul id="video-list" class="video-list"></ul>
+			<aside class="auto-reply-notice" role="note">
+				<strong>Automatic replies are on for saved videos.</strong>
+				New human comments and replies are checked every 10 seconds and
+				AI replies are posted automatically. Replies to a viewer reply
+				appear in the same thread because YouTube does not allow nested
+				replies. Google YouTube posting access must already be authorized;
+				no separate approval is needed for each reply. Frequent checks
+				may use YouTube API quota quickly.
+			</aside>
 			<div id="comments-panel" hidden>
 				<div class="section-heading">
 					<h3 id="comments-heading">Video comments</h3>
-					<button id="generate-replies" type="button">Generate reply drafts</button>
+					<div class="channel-actions">
+						<button id="refresh-comments" class="secondary" type="button">Refresh now</button>
+						<button id="generate-replies" type="button">Generate reply drafts</button>
+					</div>
 				</div>
 				<p id="comments-status" role="status" aria-live="polite"></p>
 				<ul id="comments-list" class="comment-list"></ul>
@@ -333,7 +355,9 @@
 		const commentsHeading = document.querySelector("#comments-heading");
 		const commentsStatus = document.querySelector("#comments-status");
 		const commentsList = document.querySelector("#comments-list");
+		const refreshCommentsButton = document.querySelector("#refresh-comments");
 		const generateRepliesButton = document.querySelector("#generate-replies");
+		const COMMENT_REFRESH_INTERVAL_MS = 10_000;
 		let selectedChannel = null;
 		let videoChannel = null;
 		let activeCommentVideo = null;
@@ -341,6 +365,8 @@
 		let channelVideos = [];
 		let draftOffset = 0;
 		let hasMoreDrafts = false;
+		let commentRefreshTimer = null;
+		let commentsRefreshInProgress = false;
 		let demoLoaded = false;
 		let demoBusy = false;
 
@@ -736,10 +762,17 @@
 				const text = document.createElement("p");
 				text.className = "comment-text";
 				text.textContent = comment.text || "";
+				item.append(heading, text);
+				if (comment.can_reply === false) {
+					const unavailable = document.createElement("p");
+					unavailable.className = "comment-unreplyable";
+					unavailable.textContent = "Replies are disabled for this YouTube thread.";
+					item.append(unavailable);
+				}
 				const likes = document.createElement("div");
 				likes.className = "comment-likes";
 				likes.textContent = `${Number(comment.like_count || 0).toLocaleString()} likes`;
-				item.append(heading, text, likes);
+				item.append(likes);
 				if (comment.ai_reply) {
 					const draft = document.createElement("p");
 					draft.className = "ai-draft";
@@ -774,10 +807,10 @@
 						actions.append(state);
 					}
 					item.append(actions);
-				} else if (!isReply && comment.is_replied) {
+				} else if (comment.is_replied) {
 					const posted = document.createElement("div");
 					posted.className = "comment-likes";
-					posted.textContent = "Reply posted";
+					posted.textContent = "Automatic reply posted";
 					item.append(posted);
 				}
 				const replies = comment.replies || [];
@@ -791,42 +824,76 @@
 			}
 		}
 
-		async function loadVideoComments(video) {
-			if (!videoChannel) return;
-			draftOffset = 0;
-			hasMoreDrafts = false;
-			activeCommentVideo = video;
-			commentsPanel.hidden = false;
-			commentsHeading.textContent = `Comments: ${video.title}`;
-			commentsStatus.textContent = "Loading comments and replies…";
-			commentsList.replaceChildren();
-			generateRepliesButton.disabled = true;
+		async function refreshActiveVideoComments(showLoading = false) {
+			if (!videoChannel || !activeCommentVideo || commentsRefreshInProgress) return;
+			const requestedChannelId = videoChannel.youtube_channel_id;
+			const requestedVideoId = activeCommentVideo.youtube_video_id;
+			commentsRefreshInProgress = true;
+			refreshCommentsButton.disabled = true;
+			if (showLoading) commentsStatus.textContent = "Fetching the latest comments and replies…";
 			try {
 				const response = await fetch(
-					`/comments/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(video.youtube_video_id)}`,
+					`/comments/${encodeURIComponent(requestedChannelId)}/${encodeURIComponent(requestedVideoId)}`,
 					{ credentials: "same-origin" }
 				);
 				if (!response.ok) {
 					const result = await response.json().catch(() => ({}));
 					throw new Error(result.detail || `Comments request failed (${response.status}).`);
 				}
-				currentComments = await response.json();
+				const comments = await response.json();
+				if (
+					videoChannel?.youtube_channel_id !== requestedChannelId
+					|| activeCommentVideo?.youtube_video_id !== requestedVideoId
+				) return;
+				currentComments = comments;
 				renderComments(currentComments);
 				const total = currentComments.reduce(
 					(count, comment) => count + 1 + (comment.replies || []).length,
 					0
 				);
+				const checkedAt = new Date().toLocaleTimeString();
 				commentsStatus.textContent = total
-					? `${total.toLocaleString()} comments and replies loaded.`
-					: "This video has no comments yet.";
+					? `${total.toLocaleString()} comments and replies loaded · Last checked ${checkedAt}. New AI replies appear here after the automatic posting cycle.`
+					: `No comments yet · Last checked ${checkedAt}.`;
 				generateRepliesButton.disabled = !currentComments.length;
-				hasMoreDrafts = currentComments.length > 0;
-				generateRepliesButton.textContent = "Generate reply drafts";
 			} catch (error) {
-				commentsStatus.textContent = error.message || "Could not load comments.";
+				if (
+					videoChannel?.youtube_channel_id === requestedChannelId
+					&& activeCommentVideo?.youtube_video_id === requestedVideoId
+				) {
+					commentsStatus.textContent = error.message || "Could not refresh comments.";
+				}
+			} finally {
+				commentsRefreshInProgress = false;
+				refreshCommentsButton.disabled = false;
 			}
+		}
+
+		async function loadVideoComments(video) {
+			if (!videoChannel) return;
+			if (commentRefreshTimer !== null) clearInterval(commentRefreshTimer);
+			commentRefreshTimer = null;
+			draftOffset = 0;
+			hasMoreDrafts = false;
+			activeCommentVideo = video;
+			commentsPanel.hidden = false;
+			commentsHeading.textContent = `Comments: ${video.title}`;
+			commentsList.replaceChildren();
+			generateRepliesButton.disabled = true;
+			generateRepliesButton.textContent = "Generate reply drafts";
+			await refreshActiveVideoComments(true);
+			hasMoreDrafts = currentComments.length > 0;
+			generateRepliesButton.disabled = !hasMoreDrafts;
+			// The backend worker generates/posts replies; this timer only refreshes the open view.
+			commentRefreshTimer = setInterval(() => {
+				if (!document.hidden) void refreshActiveVideoComments();
+			}, COMMENT_REFRESH_INTERVAL_MS);
 			commentsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 		}
+
+		refreshCommentsButton.addEventListener("click", () => {
+			void refreshActiveVideoComments(true);
+		});
 
 		generateRepliesButton.addEventListener("click", async () => {
 			if (!videoChannel || !activeCommentVideo) return;
@@ -1062,7 +1129,7 @@
 			};
 
 			try {
-				const response = await fetch("/business-profile/save-business-profile", {
+				const response = await fetch("/business-profile/save", {
 					method: "POST",
 					credentials: "same-origin",
 					headers: { "Content-Type": "application/json" },

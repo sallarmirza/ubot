@@ -102,6 +102,7 @@ def save_fetched_comments(
 		comment_text,
 		parent_youtube_comment_id,
 		author_channel_id,
+		can_reply,
 	) in comment_data:
 		comment = by_youtube_id.get(youtube_comment_id)
 		parent_comment = (
@@ -115,6 +116,7 @@ def save_fetched_comments(
 				youtube_comment_id=youtube_comment_id,
 				comment_text=comment_text,
 				author_channel_id=author_channel_id,
+				can_reply=can_reply,
 				video_name=video_name,
 				parent_comment=parent_comment,
 			)
@@ -123,6 +125,7 @@ def save_fetched_comments(
 		else:
 			comment.comment_text = comment_text
 			comment.author_channel_id = author_channel_id
+			comment.can_reply = can_reply
 			comment.video_name = video_name
 			comment.parent_comment = parent_comment
 		saved_comments.append(comment)
@@ -146,7 +149,7 @@ def delete_comment(
 
 def _flatten_fetched_comments(
 	comments: Sequence[Mapping[str, object]],
-) -> list[tuple[str, str, str | None, str | None]]:
+) -> list[tuple[str, str, str | None, str | None, bool | None]]:
 	flattened = []
 
 	def visit(
@@ -157,12 +160,16 @@ def _flatten_fetched_comments(
 			if not isinstance(item, Mapping):
 				raise ValueError("Fetched comment must be a mapping")
 			youtube_comment_id, comment_text, author_channel_id = _comment_fields(item)
+			can_reply = item.get("can_reply")
+			if can_reply is not None and not isinstance(can_reply, bool):
+				raise ValueError("Fetched comment replyability must be a boolean")
 			flattened.append(
 				(
 					youtube_comment_id,
 					comment_text,
 					parent_youtube_comment_id,
 					author_channel_id,
+					can_reply,
 				)
 			)
 			replies = item.get("replies", [])

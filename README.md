@@ -8,13 +8,13 @@ optional `AI_BASE_URL` defaults to `https://api.openai.com/v1`, and `AI_MODEL`
 defaults to `gpt-4o-mini`; any provider exposing the OpenAI-compatible
 `/chat/completions` endpoint can be used.
 
-Save a business profile, select a video, and load its comments. **Generate
-reply drafts** creates contextual drafts in batches of up to 20 top-level
-comments, using the business profile and selected video's description. Use
-**Generate next batch** to continue through larger videos. A draft can be
-regenerated individually. Review each draft, then use **Post reply** to publish
-it as a reply to that specific YouTube comment. Generation does not publish
-replies automatically.
+Save a business profile and select videos to enable automatic comment replies.
+The background worker checks every 10 seconds, fetches all pages of comments
+and replies, generates a contextual response for each unprocessed viewer
+comment/reply, and posts it to YouTube without a separate approval step. It
+requires the account's Google authorization to include YouTube posting access,
+and skips comments authored by the channel and comments already handled by this
+app. The comments page also supports manually generating and reviewing drafts.
 
 Google login requests `openid`, `email`, `profile`,
 `youtube.force-ssl`, and `youtube.readonly`, with offline access and consent
@@ -22,9 +22,9 @@ prompting so the app can refresh access tokens. After these scopes change,
 sign in again and approve the updated permissions. Returning sign-ins retain a
 previous refresh token if Google omits a replacement.
 
-Startup creates missing tables from the SQLAlchemy models. It does not migrate
-existing tables; update an existing database schema separately when its columns
-do not match the models. Reply posting uses an atomic database claim, so
+Startup creates missing tables from the SQLAlchemy models and applies additive
+migrations for comment author and replyability fields. Reply posting uses an
+atomic database claim, so
 concurrent requests across server workers cannot post the same draft twice. If
 the connection fails after sending a post request, the state is kept as
 uncertain; check YouTube manually before retrying to avoid duplicates.
@@ -34,14 +34,16 @@ AI reply code is separated into `router/ai_router.py`, `services/ai_service.py`,
 and `repositories/ai_repo.py`. Comment loading remains under the comments
 router and service.
 
-The application polls all selected videos every five minutes. Each poll fetches
-all pages of top-level comments and their replies, then processes only viewer
-comments that have no replies of their own. A top-level comment with replies is
-skipped; each viewer reply is checked individually. Because YouTube does not
-support nested replies, a response to a viewer reply is posted as a sibling
-reply in that thread. The worker skips the channel's own comments and uses the
-saved per-comment posting state to avoid duplicate replies. Run one application
-worker to avoid starting duplicate pollers.
+The application polls all selected videos every 10 seconds. Each poll fetches
+all pages of top-level comments and their replies, then processes each
+unanswered viewer comment and reply, including top-level comments that already
+have replies. Because YouTube does not support nested replies, a response to a
+viewer reply is posted as a sibling reply in that thread. Threads YouTube marks
+`canReply: false` are skipped and shown as unavailable in the comments UI. The
+worker skips the channel's own comments and uses the saved per-comment posting
+state to avoid duplicate replies. Frequent full scans and automatic posting can
+consume YouTube API quota quickly. Run one application worker to avoid starting
+duplicate pollers.
 
 ## Selected-video analytics
 

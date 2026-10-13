@@ -12,6 +12,7 @@ router = APIRouter(prefix="/business-profile", tags=["business profile"])
 
 
 @router.post("/save")
+@router.post("/save-business-profile", include_in_schema=False)
 def save_profile(
     payload: BusinessProfileRequest,
     db: Session = Depends(db_manager.get_db),

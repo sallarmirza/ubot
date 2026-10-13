@@ -2,11 +2,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from services import ai_service, comment_monitor_service, coments_fetching_service
+from fastapi import HTTPException
+
+from services import (
+	ai_service,
+	comment_monitor_service,
+	coments_fetching_service,
+	selection_video_service,
+)
 
 
-class LeafCommentReplyTests(unittest.TestCase):
-	def test_worker_replies_only_to_leaf_viewer_comments(self):
+class AutomaticCommentReplyTests(unittest.TestCase):
+	def test_worker_replies_to_all_unprocessed_viewer_comments_and_replies(self):
 		comments = [
 			SimpleNamespace(
 				comment_id=1,
@@ -71,6 +78,16 @@ class LeafCommentReplyTests(unittest.TestCase):
 				is_replied=False,
 				reply_status="draft",
 			),
+			SimpleNamespace(
+				comment_id=8,
+				youtube_comment_id="cannot-reply-thread",
+				parent_comment_id=None,
+				author_channel_id="viewer-channel",
+				youtube_reply_id=None,
+				is_replied=False,
+				reply_status="draft",
+				can_reply=False,
+			),
 		]
 		regenerated_ids = []
 		posted_ids = []
@@ -99,14 +116,16 @@ class LeafCommentReplyTests(unittest.TestCase):
 			)
 
 		self.assertEqual(regenerated_ids, [
+			"top-with-replies",
 			"viewer-reply-1",
 			"viewer-reply-2",
+			"top-without-replies",
 			"unanswered-top-level",
 		])
 		self.assertEqual(posted_ids, regenerated_ids)
-		self.assertEqual(result["attempted"], 3)
-		self.assertEqual(result["posted"], 3)
-		self.assertEqual(result["skipped"], 4)
+		self.assertEqual(result["attempted"], 5)
+		self.assertEqual(result["posted"], 5)
+		self.assertEqual(result["skipped"], 3)
 
 
 class FullCommentFetchTests(unittest.TestCase):
@@ -114,8 +133,9 @@ class FullCommentFetchTests(unittest.TestCase):
 		thread_calls = 0
 		reply_calls = 0
 
-		def thread(top_comment_id, *, reply_count):
+		def thread(top_comment_id, *, reply_count, can_reply=True):
 			return {
+				"canReply": can_reply,
 				"snippet": {
 					"totalReplyCount": reply_count,
 					"topLevelComment": {
@@ -134,9 +154,11 @@ class FullCommentFetchTests(unittest.TestCase):
 			if endpoint == "commentThreads":
 				thread_calls += 1
 				if params.get("pageToken") == "next-thread-page":
-					return {"items": [thread("top-2", reply_count=0)]}
+					return {
+						"items": [thread("top-2", reply_count=0, can_reply=False)]
+					}
 				return {
-					"items": [thread("top-1", reply_count=101)],
+					"items": [thread("top-1", reply_count=101, can_reply=False)],
 					"nextPageToken": "next-thread-page",
 				}
 
@@ -180,15 +202,18 @@ class FullCommentFetchTests(unittest.TestCase):
 		self.assertEqual(len(result), 2)
 		self.assertEqual(len(result[0]["replies"]), 101)
 		self.assertEqual(result[0]["author_channel_id"], "viewer-channel")
+		self.assertFalse(result[0]["can_reply"])
+		self.assertFalse(result[0]["replies"][0]["can_reply"])
 		self.assertEqual(
 			result[0]["replies"][100]["author_channel_id"], "viewer-channel"
 		)
 		self.assertEqual(result[1]["youtube_comment_id"], "top-2")
 		self.assertEqual(result[1]["replies"], [])
+		self.assertFalse(result[1]["can_reply"])
 
 
 class PeriodicMonitorCycleTests(unittest.TestCase):
-	def test_cycle_fetches_all_threads_then_processes_leaf_comments(self):
+	def test_cycle_fetches_all_threads_then_processes_all_comments(self):
 		db = Mock()
 		db.__enter__ = Mock(return_value=db)
 		db.__exit__ = Mock(return_value=False)
@@ -224,6 +249,57 @@ class PeriodicMonitorCycleTests(unittest.TestCase):
 			max_replies=None,
 		)
 		reply.assert_called_once_with(db, 12, "our-channel", "video-5")
+		self.assertEqual(comment_monitor_service.COMMENT_FETCH_INTERVAL_SECONDS, 10)
+
+
+class YouTubeVideoRequestErrorTests(unittest.TestCase):
+	def test_quota_error_is_reported_as_actionable_service_unavailable(self):
+		response = Mock(
+			status_code=403,
+			json=Mock(
+				return_value={
+					"error": {
+						"message": "Quota exceeded",
+						"errors": [{"reason": "quotaExceeded"}],
+					}
+				}
+			),
+		)
+		client = Mock()
+		client.get.return_value = response
+
+		with patch.object(
+			selection_video_service, "get_sync_http_client", return_value=client
+		):
+			with self.assertRaises(HTTPException) as context:
+				selection_video_service._youtube_get("token", "channels", {})
+
+		self.assertEqual(context.exception.status_code, 503)
+		self.assertIn("quota", context.exception.detail.lower())
+
+	def test_youtube_error_reason_is_included_for_unmapped_failures(self):
+		response = Mock(
+			status_code=400,
+			json=Mock(
+				return_value={
+					"error": {
+						"message": "Invalid channel identifier",
+						"errors": [{"reason": "invalidParameter"}],
+					}
+				}
+			),
+		)
+		client = Mock()
+		client.get.return_value = response
+
+		with patch.object(
+			selection_video_service, "get_sync_http_client", return_value=client
+		):
+			with self.assertRaises(HTTPException) as context:
+				selection_video_service._youtube_get("token", "channels", {})
+
+		self.assertEqual(context.exception.status_code, 502)
+		self.assertIn("invalidParameter", context.exception.detail)
 
 
 if __name__ == "__main__":
