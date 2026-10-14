@@ -1,17 +1,11 @@
+# repositories/coments_feching_repo.py
 from collections.abc import Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
-from db_model import Comments, TargetVideo
+from db_model import Comments
 
-
-def _get_video_name(db: Session, selected_video_id: int) -> str | None:
-	selected_video = (
-		db.query(TargetVideo)
-		.filter_by(selected_video_id=selected_video_id)
-		.first()
-	)
-	return selected_video.video.title if selected_video is not None else None
+COMMENT_TEXT_MAX = 800
 
 
 def get_comments(db: Session, selected_video_id: int) -> list[Comments]:
@@ -47,7 +41,7 @@ def create_comment(
 ) -> Comments:
 	"""Add a comment to a selected video without committing the transaction."""
 	_validate_youtube_comment_id(youtube_comment_id)
-	_validate_comment_text(comment_text)
+	comment_text = _clean_comment_text(comment_text)
 	if parent_comment_id is not None:
 		parent = (
 			db.query(Comments)
@@ -63,7 +57,6 @@ def create_comment(
 		selected_video_id=selected_video_id,
 		youtube_comment_id=youtube_comment_id,
 		comment_text=comment_text,
-		video_name=_get_video_name(db, selected_video_id),
 		parent_comment_id=parent_comment_id,
 	)
 	db.add(comment)
@@ -94,7 +87,6 @@ def save_fetched_comments(
 		.all()
 	)
 	by_youtube_id = {comment.youtube_comment_id: comment for comment in existing_comments}
-	video_name = _get_video_name(db, selected_video_id)
 
 	saved_comments = []
 	for youtube_comment_id, comment_text, parent_youtube_comment_id in comment_data:
@@ -109,14 +101,12 @@ def save_fetched_comments(
 				selected_video_id=selected_video_id,
 				youtube_comment_id=youtube_comment_id,
 				comment_text=comment_text,
-				video_name=video_name,
 				parent_comment=parent_comment,
 			)
 			db.add(comment)
 			by_youtube_id[youtube_comment_id] = comment
 		else:
 			comment.comment_text = comment_text
-			comment.video_name = video_name
 			comment.parent_comment = parent_comment
 		saved_comments.append(comment)
 
@@ -170,8 +160,7 @@ def _comment_fields(comment: Mapping[str, object]) -> tuple[str, str]:
 	if not isinstance(comment_text, str):
 		raise ValueError("Fetched comment text must be a string")
 	_validate_youtube_comment_id(youtube_comment_id)
-	_validate_comment_text(comment_text)
-	return youtube_comment_id, comment_text
+	return youtube_comment_id, _clean_comment_text(comment_text)
 
 
 def _validate_youtube_comment_id(youtube_comment_id: str) -> None:
@@ -181,6 +170,6 @@ def _validate_youtube_comment_id(youtube_comment_id: str) -> None:
 		raise ValueError("YouTube comment ID exceeds the database column limit")
 
 
-def _validate_comment_text(comment_text: str) -> None:
-	if len(comment_text) > 800:
-		raise ValueError("Comment text exceeds the database column limit")
+def _clean_comment_text(comment_text: str) -> str:
+	"""Make text safe for Postgres: drop NUL bytes and fit the 800-char column."""
+	return comment_text.replace("\x00", "")[:COMMENT_TEXT_MAX]

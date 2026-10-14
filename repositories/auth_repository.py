@@ -1,22 +1,19 @@
 # repositories/auth_repository.py
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from db_model import User, UserOAuth, YoutubeChannel
 
 
-def find_user_id_by_channel_ids(db: Session, youtube_channel_ids: list[str]) -> int | None:
-    """Recognise a returning user: have we stored any of these channels before?
-    (Swap this for a google_id lookup later if you add that column.)"""
-    row = (
-        db.query(YoutubeChannel.user_id)
-        .filter(YoutubeChannel.youtube_channel_id.in_(youtube_channel_ids))
-        .first()
-    )
-    return row[0] if row else None
+def get_user_by_google_sub(db: Session, google_sub: str) -> User | None:
+    """Recognise a returning user by Google's stable user id."""
+    return db.execute(
+        select(User).where(User.google_sub == google_sub)
+    ).scalar_one_or_none()
 
 
-def create_user(db: Session) -> User:
+def create_user(db: Session, google_sub: str, email: str | None = None) -> User:
     """Insert a new user row for a first-time login."""
-    user = User()
+    user = User(google_sub=google_sub, email=email)
     db.add(user)
     db.flush()  # assigns user.user_id without committing
     return user

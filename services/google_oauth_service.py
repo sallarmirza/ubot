@@ -1,3 +1,4 @@
+# services/google_oauth_service.py
 from urllib.parse import urlencode
 
 import logging
@@ -7,10 +8,11 @@ from core.config import settings
 from schema.oauth_schema import GoogleOAuthError
 from services.http_clients import get_sync_http_client
 
-# talk to google only 
+# talk to google only
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 SCOPES = [
     "openid",
@@ -50,42 +52,48 @@ def _log_channel_fetch_error(response: httpx.Response) -> None:
         response.text,
     )
 
+
 # user routed to google pages
-def build_login_url(state:str)->str:
-    """ URL of Google's consent page the user is redirected to"""
-    params={
-        "client_id":settings.GOOGLE_CLIENT_ID,
-        "redirect_uri":settings.GOOGLE_REDIRECT_URI,
-        "response_type":"code",
-        "scope":" ".join(SCOPES),
-        "access_type":"offline",
-        "prompt":"consent",
+def build_login_url(state: str) -> str:
+    """URL of Google's consent page the user is redirected to"""
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
         "include_granted_scopes": "true",
-        "state":state,
+        "state": state,
     }
-    
+
     return f"{AUTH_URL}?{urlencode(params)}"
 
-# get long term token 
-def exchange_code_for_tokens(code:str)->dict:
+
+# get long term token
+def exchange_code_for_tokens(code: str) -> dict:
     """exchange the one-time code for access_token and refresh_token"""
     try:
-        resp=get_sync_http_client().post(
+        resp = get_sync_http_client().post(
             TOKEN_URL,
             data={
-                "code":code,
-                "client_id":settings.GOOGLE_CLIENT_ID,
-                "client_secret":settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uri":settings.GOOGLE_REDIRECT_URI,
-                "grant_type":"authorization_code",
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
             },
             timeout=15,
         )
     except httpx.RequestError as exc:
         logger.error("Google token exchange request failed: %s", exc)
         raise GoogleOAuthError("Token Exchange failed: network error") from exc
-    if resp.status_code!=200:
-        logger.error("Google token exchange failed: status=%s body=%s", resp.status_code, resp.text)
+    if resp.status_code != 200:
+        logger.error(
+            "Google token exchange failed: status=%s body=%s",
+            resp.status_code,
+            resp.text,
+        )
         raise GoogleOAuthError(f"Token Exchange failed:{resp.text}")
     try:
         tokens = resp.json()
@@ -96,6 +104,35 @@ def exchange_code_for_tokens(code:str)->dict:
         logger.error("Google token exchange returned an unexpected response type")
         raise GoogleOAuthError("Token Exchange failed: invalid response")
     return tokens
+
+
+# get the Google account's identity (stable user id + email)
+def fetch_userinfo(access_token: str) -> dict:
+    """Return the Google profile (sub, email) for this access token."""
+    try:
+        resp = get_sync_http_client().get(
+            USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+    except httpx.RequestError as exc:
+        logger.error("Google userinfo request failed: %s", exc)
+        raise GoogleOAuthError("Fetching user info failed: network error") from exc
+    if resp.status_code != 200:
+        logger.error(
+            "Google userinfo failed: status=%s body=%s", resp.status_code, resp.text
+        )
+        raise GoogleOAuthError(f"Fetching user info failed: {resp.text}")
+    try:
+        profile = resp.json()
+    except ValueError as exc:
+        logger.error("Google userinfo returned invalid JSON")
+        raise GoogleOAuthError("Fetching user info failed: invalid response") from exc
+    if not isinstance(profile, dict):
+        logger.error("Google userinfo returned an unexpected response type")
+        raise GoogleOAuthError("Fetching user info failed: invalid response")
+    return profile
+
 
 # fetch all channels of user
 def fetch_my_channels(access_token: str) -> list[dict]:

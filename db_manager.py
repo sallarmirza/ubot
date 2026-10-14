@@ -1,14 +1,10 @@
 # app/db_manager.py
+# PostgreSQL engine, session factory, table creation and the get_db dependency.
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, event,inspect,text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
-
-Base = declarative_base()
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL")
@@ -16,85 +12,46 @@ DB_URL = os.getenv("DATABASE_URL")
 
 class DBManager:
     def __init__(self):
-        is_sqlite = bool(DB_URL and DB_URL.startswith("sqlite"))
+        if not DB_URL:
+            raise RuntimeError("DATABASE_URL is not set (check your .env file)")
 
-        connect_args = (
-            # check_same_thread: SQLAlchemy shares connections across threads
-            # timeout:           wait up to 30s before raising "database is locked"
-            {"check_same_thread": False, "timeout": 30}
-            if is_sqlite
-            else {}
+        self.engine = create_engine(
+            DB_URL,
+            pool_size=10,        # connections kept open in the pool
+            max_overflow=20,     # extra connections allowed under load
+            pool_pre_ping=True,  # test a connection before use, drops stale ones
+            pool_recycle=1800,   # recycle connections after 30 minutes
         )
-
-        self.engine = create_engine(DB_URL, connect_args=connect_args)
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False)
 
-        if is_sqlite:
-            self._enable_sqlite_wal()
-
-    def _enable_sqlite_wal(self):
-        """Turn on WAL mode so readers don't block writers and vice-versa.
-
-        Without this, SQLite allows either one writer OR many readers. If a
-        slow endpoint (e.g. one calling YouTube for 20 seconds) holds a write
-        transaction, any concurrent read fails instantly with "database is
-        locked". WAL mode lets readers and the writer coexist.
-        """
-        @event.listens_for(self.engine, "connect")
-        def _set_sqlite_pragmas(dbapi_conn, _):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds
-            cursor.close()
-
     def create_tables(self):
+        """Create all tables from the models (skips tables that already exist).
 
-        import db_model  # models register karne ke liye
+        The old SQLite ALTER TABLE migrations are gone: on a fresh Postgres
+        database create_all builds the final schema, including every column
+        that used to be added by hand. Use Alembic for future schema changes.
+        """
+        import db_model  # imported here so the models register on Base
+
         db_model.Base.metadata.create_all(bind=self.engine)
-        migrations = {
-            "target_video": {"prompt_context": "TEXT"},
-            "comments": {
-                "parent_comment_id": "INTEGER REFERENCES comments(comment_id)",
-                "youtube_reply_id": "VARCHAR(100)",
-                "reply_status": "VARCHAR(20) NOT NULL DEFAULT 'draft'",
-                "reply_posting_started_at": "DATETIME",
-            },
-        }
-        inspector = inspect(self.engine)
-        with self.engine.begin() as connection:
-            for table_name, columns in migrations.items():
-                existing = {
-                    column["name"] for column in inspector.get_columns(table_name)
-                }
-                for column_name, column_type in columns.items():
-                    if column_name not in existing:
-                        connection.execute(
-                            text(
-                                f"ALTER TABLE {table_name} "
-                                f"ADD COLUMN {column_name} {column_type}"
-                            )
-                        )
-            connection.execute(
-                text(
-                    "UPDATE comments SET reply_status = 'posted' "
-                    "WHERE is_replied = 1 AND reply_status != 'posted'"
-                )
-            )
 
     def drop_tables(self):
-
+        """Drop every table. Destructive: only for development/testing."""
         import db_model
 
-        db_model.Base.metadata.create_all(bind=self.engine)
+        db_model.Base.metadata.drop_all(bind=self.engine)
 
+    # FastAPI dependency: one session per request, always closed afterwards
     def get_db(self):
         db = self.SessionLocal()
         try:
             yield db
         finally:
             db.close()
+
+    # close all connections on shutdown
+    def close(self):
+        self.engine.dispose()
 
 
 db_manager = DBManager()

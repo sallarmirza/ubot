@@ -1,6 +1,5 @@
-from datetime import datetime, timedelta, timezone
 import logging
-
+from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -51,12 +50,13 @@ def _get_target_channel(
 
 
 def _get_access_token(db: Session, user_id: int) -> str:
+    
 	oauth = db.query(UserOAuth).filter_by(user_id=user_id).first()
 	if oauth is None:
 		raise HTTPException(status_code=401, detail="Google account is not connected")
 
 	# The DB stores naive UTC datetimes, so compare against a naive UTC "now".
-	now = datetime.now(timezone.utc).replace(tzinfo=None)
+	now = datetime.now(timezone.utc)
 
 	# Token is still valid for at least the safety margin: use it as is.
 	if oauth.expires_at and oauth.expires_at > now + TOKEN_EXPIRY_MARGIN:
