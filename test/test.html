@@ -286,20 +286,18 @@
 			<p id="video-status" role="status" aria-live="polite"></p>
 			<ul id="video-list" class="video-list"></ul>
 			<aside class="auto-reply-notice" role="note">
-				<strong>Automatic replies are on for saved videos.</strong>
-				New human comments and replies are checked every 10 seconds and
-				AI replies are posted automatically. Replies to a viewer reply
-				appear in the same thread because YouTube does not allow nested
-				replies. Google YouTube posting access must already be authorized;
-				no separate approval is needed for each reply. Frequent checks
-				may use YouTube API quota quickly.
+				<strong>Replies are only generated and posted when you request them.</strong>
+				Loading or refreshing comments never posts replies. Choose
+				“Generate &amp; Post Replies” to process the selected video's
+				eligible comments. Google YouTube posting access must already be
+				authorized.
 			</aside>
 			<div id="comments-panel" hidden>
 				<div class="section-heading">
 					<h3 id="comments-heading">Video comments</h3>
 					<div class="channel-actions">
 						<button id="refresh-comments" class="secondary" type="button">Refresh now</button>
-						<button id="generate-replies" type="button">Generate reply drafts</button>
+						<button id="generate-replies" type="button">Generate &amp; Post Replies</button>
 					</div>
 				</div>
 				<p id="comments-status" role="status" aria-live="polite"></p>
@@ -356,15 +354,13 @@
 		const commentsStatus = document.querySelector("#comments-status");
 		const commentsList = document.querySelector("#comments-list");
 		const refreshCommentsButton = document.querySelector("#refresh-comments");
-		const generateRepliesButton = document.querySelector("#generate-replies");
+		const generateAndPostRepliesButton = document.querySelector("#generate-replies");
 		const COMMENT_REFRESH_INTERVAL_MS = 10_000;
 		let selectedChannel = null;
 		let videoChannel = null;
 		let activeCommentVideo = null;
 		let currentComments = [];
 		let channelVideos = [];
-		let draftOffset = 0;
-		let hasMoreDrafts = false;
 		let commentRefreshTimer = null;
 		let commentsRefreshInProgress = false;
 		let demoLoaded = false;
@@ -720,7 +716,8 @@
 					const result = await response.json().catch(() => ({}));
 					throw new Error(result.detail || `Analytics request failed (${response.status}).`);
 				}
-				renderAnalytics(await response.json());
+				const analytics = await response.json();
+				renderAnalytics(Array.isArray(analytics) ? analytics : [analytics]);
 			} catch (error) {
 				analyticsStatus.textContent = error.message || "Could not load analytics.";
 			} finally {
@@ -810,7 +807,7 @@
 				} else if (comment.is_replied) {
 					const posted = document.createElement("div");
 					posted.className = "comment-likes";
-					posted.textContent = "Automatic reply posted";
+					posted.textContent = "Reply posted";
 					item.append(posted);
 				}
 				const replies = comment.replies || [];
@@ -853,9 +850,9 @@
 				);
 				const checkedAt = new Date().toLocaleTimeString();
 				commentsStatus.textContent = total
-					? `${total.toLocaleString()} comments and replies loaded · Last checked ${checkedAt}. New AI replies appear here after the automatic posting cycle.`
+					? `${total.toLocaleString()} comments and replies loaded · Last checked ${checkedAt}.`
 					: `No comments yet · Last checked ${checkedAt}.`;
-				generateRepliesButton.disabled = !currentComments.length;
+				generateAndPostRepliesButton.disabled = !currentComments.length;
 			} catch (error) {
 				if (
 					videoChannel?.youtube_channel_id === requestedChannelId
@@ -873,18 +870,14 @@
 			if (!videoChannel) return;
 			if (commentRefreshTimer !== null) clearInterval(commentRefreshTimer);
 			commentRefreshTimer = null;
-			draftOffset = 0;
-			hasMoreDrafts = false;
 			activeCommentVideo = video;
 			commentsPanel.hidden = false;
 			commentsHeading.textContent = `Comments: ${video.title}`;
 			commentsList.replaceChildren();
-			generateRepliesButton.disabled = true;
-			generateRepliesButton.textContent = "Generate reply drafts";
+			generateAndPostRepliesButton.disabled = true;
+			generateAndPostRepliesButton.textContent = "Generate & Post Replies";
 			await refreshActiveVideoComments(true);
-			hasMoreDrafts = currentComments.length > 0;
-			generateRepliesButton.disabled = !hasMoreDrafts;
-			// The backend worker generates/posts replies; this timer only refreshes the open view.
+			generateAndPostRepliesButton.disabled = !currentComments.length;
 			commentRefreshTimer = setInterval(() => {
 				if (!document.hidden) void refreshActiveVideoComments();
 			}, COMMENT_REFRESH_INTERVAL_MS);
@@ -895,49 +888,28 @@
 			void refreshActiveVideoComments(true);
 		});
 
-		generateRepliesButton.addEventListener("click", async () => {
+		generateAndPostRepliesButton.addEventListener("click", async () => {
 			if (!videoChannel || !activeCommentVideo) return;
-			generateRepliesButton.disabled = true;
-			commentsStatus.textContent = `Generating up to 20 drafts (starting at comment ${draftOffset + 1})…`;
+			generateAndPostRepliesButton.disabled = true;
+			generateAndPostRepliesButton.textContent = "Generating & posting…";
+			commentsStatus.textContent = "Generating replies and posting eligible comments to YouTube…";
 			try {
 				const response = await fetch(
-					`/ai/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}/generate-replies?offset=${draftOffset}&limit=20`,
+					`/ai/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}/generate-and-post-replies`,
 					{ method: "POST", credentials: "same-origin" }
 				);
 				if (!response.ok) {
 					const result = await response.json().catch(() => ({}));
-					throw new Error(result.detail || `Draft generation failed (${response.status}).`);
+					throw new Error(result.detail || `Reply processing failed (${response.status}).`);
 				}
-				const batch = await response.json();
-				const draftsById = new Map(batch.results.map((draft) => [draft.youtube_comment_id, draft]));
-				const applyDrafts = (items) => items.map((comment) => {
-					const draft = draftsById.get(comment.youtube_comment_id);
-					return {
-						...comment,
-						...(draft || {}),
-						replies: applyDrafts(comment.replies || [])
-					};
-				});
-				currentComments = await (async () => {
-					const response = await fetch(
-						`/comments/${encodeURIComponent(videoChannel.youtube_channel_id)}/${encodeURIComponent(activeCommentVideo.youtube_video_id)}`,
-						{ credentials: "same-origin" }
-					);
-					if (!response.ok) throw new Error("Drafts were saved, but comments could not be refreshed.");
-					return response.json();
-				})();
-				currentComments = applyDrafts(currentComments);
-				renderComments(currentComments);
-				const generated = batch.results.filter((draft) => !draft.skipped && !draft.error).length;
-				const errors = batch.results.filter((draft) => draft.error).length;
-				draftOffset = batch.next_offset;
-				hasMoreDrafts = batch.has_more;
-				generateRepliesButton.textContent = hasMoreDrafts ? "Generate next batch (up to 20)" : "All comments processed";
-				commentsStatus.textContent = `${generated} drafts generated${errors ? `; ${errors} errors shown on comments` : ""}.${hasMoreDrafts ? " Generate the next batch to continue." : ""}`;
+				const result = await response.json();
+				await refreshActiveVideoComments();
+				commentsStatus.textContent = `${result.posted} replies posted; ${result.skipped} skipped; ${result.failed} failed.`;
 			} catch (error) {
-				commentsStatus.textContent = error.message || "Could not generate reply drafts.";
+				commentsStatus.textContent = error.message || "Could not process replies.";
 			} finally {
-				generateRepliesButton.disabled = !hasMoreDrafts;
+				generateAndPostRepliesButton.textContent = "Generate & Post Replies";
+				generateAndPostRepliesButton.disabled = !currentComments.length;
 			}
 		});
 

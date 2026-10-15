@@ -4,6 +4,8 @@ from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
+from router import ai_router, comments_fetching_router, selection_video_router
+from schema.selection_video_schema import SelectedVideosRequest
 from services import (
 	ai_service,
 	comment_monitor_service,
@@ -12,8 +14,148 @@ from services import (
 )
 
 
-class AutomaticCommentReplyTests(unittest.TestCase):
-	def test_worker_replies_to_all_unprocessed_viewer_comments_and_replies(self):
+class ExplicitReplyEndpointTests(unittest.TestCase):
+	def test_comments_get_only_fetches_and_persists_comments(self):
+		db = Mock()
+		user = SimpleNamespace(user_id=7)
+		with patch.object(
+			coments_fetching_service, "fetch_video_comments", return_value=[]
+		) as fetch, patch.object(
+			ai_service, "generate_and_post_video_replies"
+		) as generate_and_post, patch.object(
+			ai_service, "post_video_comment_reply"
+		) as post_reply:
+			result = comments_fetching_router.get_comments(
+				"our-channel", "video-1", 100, 50, db, user
+			)
+
+		self.assertEqual(result, [])
+		fetch.assert_called_once_with(db, 7, "our-channel", "video-1", 100, 50)
+		generate_and_post.assert_not_called()
+		post_reply.assert_not_called()
+
+	def test_explicit_post_fetches_full_comment_history_then_processes_replies(self):
+		db = Mock()
+		user = SimpleNamespace(user_id=7)
+		call_order = []
+
+		def fetch(*args, **kwargs):
+			self.assertEqual(len(args), 4)
+			self.assertEqual(
+				kwargs,
+				{"max_comments": None, "max_replies": None},
+			)
+			call_order.append("fetch")
+
+		def generate_and_post(*args):
+			self.assertEqual(args, (db, 7, "our-channel", "video-1"))
+			call_order.append("generate-and-post")
+			return {
+				"total": 1,
+				"attempted": 1,
+				"posted": 1,
+				"skipped": 0,
+				"failed": 0,
+				"failures": [],
+			}
+
+		with patch.object(
+			coments_fetching_service, "fetch_video_comments", side_effect=fetch
+		) as fetch_comments, patch.object(
+			ai_service,
+			"generate_and_post_video_replies",
+			side_effect=generate_and_post,
+		) as process:
+			result = ai_router.generate_and_post_replies(
+				"our-channel", "video-1", db, user
+			)
+
+		self.assertEqual(call_order, ["fetch", "generate-and-post"])
+		fetch_comments.assert_called_once_with(
+			db,
+			7,
+			"our-channel",
+			"video-1",
+			max_comments=None,
+			max_replies=None,
+		)
+		process.assert_called_once_with(db, 7, "our-channel", "video-1")
+		self.assertEqual(result["posted"], 1)
+		self.assertTrue(
+			any(
+				route.path
+				== "/ai/{channel_id}/{video_id}/generate-and-post-replies"
+				and "POST" in route.methods
+				for route in ai_router.router.routes
+			)
+		)
+
+	def test_selecting_and_saving_videos_do_not_generate_or_post_replies(self):
+		db = Mock()
+		user = SimpleNamespace(user_id=7)
+		payload = SelectedVideosRequest(channel_id="our-channel", videos=[])
+		with patch.object(
+			selection_video_router.selection_video_service,
+			"list_channel_videos",
+			return_value=[],
+		), patch.object(
+			selection_video_router.selection_video_service,
+			"save_selected_videos",
+			return_value=[],
+		), patch.object(
+			ai_service, "generate_and_post_video_replies"
+		) as generate_and_post, patch.object(
+			ai_service, "post_video_comment_reply"
+		) as post_reply:
+			selection_video_router.get_channel_videos(
+				"our-channel", 5, db, user
+			)
+			selection_video_router.save_selected_videos(payload, db, user)
+
+		generate_and_post.assert_not_called()
+		post_reply.assert_not_called()
+
+
+class CommentsFetchBehaviorTests(unittest.TestCase):
+	def test_fetch_comments_attaches_state_without_generating_or_posting(self):
+		db = Mock()
+		selected_video = SimpleNamespace(selected_video_id=11)
+		with patch.object(
+			coments_fetching_service.ai_repo,
+			"get_selected_video",
+			return_value=selected_video,
+		), patch.object(
+			coments_fetching_service,
+			"_get_access_token",
+			return_value="test-token",
+		), patch.object(
+			coments_fetching_service,
+			"_get_all_comments",
+			return_value=[],
+		), patch.object(
+			coments_fetching_service.coments_feching_repo,
+			"save_fetched_comments",
+		), patch.object(
+			ai_service, "attach_saved_reply_state"
+		), patch.object(
+			ai_service, "_generate_ai_reply"
+		) as generate_reply, patch.object(
+			ai_service, "post_video_comment_reply"
+		) as post_reply, patch.object(
+			ai_service, "generate_and_post_video_replies"
+		) as generate_and_post:
+			result = coments_fetching_service.fetch_video_comments(
+				db, 7, "our-channel", "video-1"
+			)
+
+		self.assertEqual(result, [])
+		generate_reply.assert_not_called()
+		post_reply.assert_not_called()
+		generate_and_post.assert_not_called()
+
+
+class ExplicitCommentReplyTests(unittest.TestCase):
+	def test_explicit_action_skips_already_replied_comments(self):
 		comments = [
 			SimpleNamespace(
 				comment_id=1,
@@ -213,7 +355,7 @@ class FullCommentFetchTests(unittest.TestCase):
 
 
 class PeriodicMonitorCycleTests(unittest.TestCase):
-	def test_cycle_fetches_all_threads_then_processes_all_comments(self):
+	def test_comment_refresh_cycle_fetches_without_generating_or_posting(self):
 		db = Mock()
 		db.__enter__ = Mock(return_value=db)
 		db.__exit__ = Mock(return_value=False)
@@ -229,14 +371,7 @@ class PeriodicMonitorCycleTests(unittest.TestCase):
 			comment_monitor_service.coments_fetching_service,
 			"fetch_video_comments",
 		) as fetch, patch.object(
-			comment_monitor_service.ai_service,
-			"generate_and_post_video_replies",
-			return_value={
-				"attempted": 2,
-				"posted": 2,
-				"skipped": 1,
-				"failed": 0,
-			},
+			ai_service, "generate_and_post_video_replies"
 		) as reply:
 			comment_monitor_service.run_comment_monitoring_cycle()
 
@@ -245,10 +380,8 @@ class PeriodicMonitorCycleTests(unittest.TestCase):
 			12,
 			"our-channel",
 			"video-5",
-			max_comments=None,
-			max_replies=None,
 		)
-		reply.assert_called_once_with(db, 12, "our-channel", "video-5")
+		reply.assert_not_called()
 		self.assertEqual(comment_monitor_service.COMMENT_FETCH_INTERVAL_SECONDS, 10)
 
 

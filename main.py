@@ -1,6 +1,4 @@
 # main.py 
-import asyncio
-import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -22,52 +20,25 @@ from services.http_clients import (
     get_async_http_client,
     get_sync_http_client,
 )
-from services.comment_monitor_service import (
-    COMMENT_FETCH_INTERVAL_SECONDS,
-    run_comment_monitoring_cycle,
-)
-
-
-logger = logging.getLogger(__name__)
-
-
-async def _periodic_comment_monitor(stop_event: asyncio.Event) -> None:
-    """Poll immediately and then repeat every five minutes without blocking ASGI."""
-    while not stop_event.is_set():
-        try:
-            await asyncio.to_thread(run_comment_monitoring_cycle)
-        except Exception:
-            logger.exception("Unexpected periodic comment-monitor failure")
-        try:
-            await asyncio.wait_for(
-                stop_event.wait(), timeout=COMMENT_FETCH_INTERVAL_SECONDS
-            )
-        except asyncio.TimeoutError:
-            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    monitor_stop = asyncio.Event()
-    monitor_task = None
     try:
         app.state.http_clients = (
             get_sync_http_client(),
             get_async_http_client(),
         )
-        # The worker belongs to this FastAPI process and shuts down with it.
-        monitor_task = asyncio.create_task(_periodic_comment_monitor(monitor_stop))
         yield
     finally:
-        # Stop the monitor before closing the clients it uses.
-        monitor_stop.set()
-        if monitor_task is not None:
-            await monitor_task
         try:
             await close_http_clients()
         finally:
-            if hasattr(app.state, "http_clients"):
-                del app.state.http_clients
+            try:
+                db_manager.close()
+            finally:
+                if hasattr(app.state, "http_clients"):
+                    del app.state.http_clients
 
 
 app=FastAPI(title="Fastapi Backend", lifespan=lifespan)

@@ -21,7 +21,7 @@ def login_with_google(db: Session, code: str) -> int:
     if user_id is None:
         user_id = repo.create_user(db).user_id
 
-    # 3. Store tokens (expires_at as naive UTC, since SQLite DateTime has no timezone)
+    # 3. Store tokens as naive UTC for the database DateTime column.
     expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
         seconds=tokens.get("expires_in", 3600)
     )

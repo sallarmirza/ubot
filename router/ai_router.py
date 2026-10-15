@@ -5,10 +5,30 @@ from core.dependencies import get_current_user
 from db_manager import db_manager
 from db_model import User
 from schema.ai_schema import ReplyDraftBatch, ReplyDraftResult
-from services import ai_service
+from services import ai_service, coments_fetching_service
 
 
 router = APIRouter(prefix="/ai", tags=["AI replies"])
+
+
+@router.post("/{channel_id}/{video_id}/generate-and-post-replies")
+def generate_and_post_replies(
+	channel_id: str,
+	video_id: str,
+	db: Session = Depends(db_manager.get_db),
+	user: User = Depends(get_current_user),
+):
+	coments_fetching_service.fetch_video_comments(
+		db,
+		user.user_id,
+		channel_id,
+		video_id,
+		max_comments=None,
+		max_replies=None,
+	)
+	return ai_service.generate_and_post_video_replies(
+		db, user.user_id, channel_id, video_id
+	)
 
 
 @router.post(

@@ -183,9 +183,9 @@ def _get_all_comments(
 			for reply in comment["replies"]:
 				reply["can_reply"] = comment["can_reply"]
 
-			# A thread response embeds only a small reply preview. The scheduled
-			# poller passes max_replies=None to fetch every reply page; the UI
-			# keeps its configured limit to avoid unbounded interactive requests.
+			# A thread response embeds only a small reply preview. The explicit
+			# generate-and-post action passes max_replies=None to fetch every page;
+			# regular UI requests remain bounded.
 			wanted = total_replies if max_replies is None else min(total_replies, max_replies)
 			if parent_id and len(comment["replies"]) < wanted:
 				comment["replies"] = _get_replies(
@@ -231,8 +231,8 @@ def fetch_video_comments(
 	# Get a valid Google access token (refreshed automatically if expired).
 	access_token = _get_access_token(db, user_id)
 
-	# `None` means the scheduled worker must fetch every API page; regular UI
-	# requests retain their bounded defaults to keep loading time predictable.
+	# `None` fetches every API page for the explicit generate-and-post action;
+	# regular UI requests retain their bounded defaults.
 	comments = _get_all_comments(
 		access_token,
 		video_id,

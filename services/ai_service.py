@@ -246,7 +246,7 @@ async def generate_video_reply_drafts(
 		for comment in all_comments
 		if comment.parent_comment_id is not None
 	}
-	# Keep draft pagination aligned with the leaf-only auto-reply policy, so the
+	# Keep draft pagination aligned with reply eligibility, so the
 	# UI doesn't generate drafts for top-level comments that already have replies.
 	comments = [
 		comment
@@ -670,7 +670,7 @@ def generate_and_post_video_replies(
 				{"youtube_comment_id": comment_id, "detail": error.detail}
 			)
 			logger.warning(
-				"Auto reply failed: user_id=%s channel_id=%s video_id=%s "
+				"Explicit reply failed: user_id=%s channel_id=%s video_id=%s "
 				"youtube_comment_id=%s status=%s",
 				user_id,
 				channel_id,
@@ -686,7 +686,7 @@ def generate_and_post_video_replies(
 				{"youtube_comment_id": comment_id, "detail": "Unable to process reply"}
 			)
 			logger.exception(
-				"Unexpected auto reply failure: user_id=%s channel_id=%s "
+				"Unexpected explicit reply failure: user_id=%s channel_id=%s "
 				"video_id=%s youtube_comment_id=%s",
 				user_id,
 				channel_id,
@@ -697,7 +697,7 @@ def generate_and_post_video_replies(
 
 		summary["posted"] += 1
 		logger.info(
-			"Auto reply posted: user_id=%s channel_id=%s video_id=%s "
+			"Explicit reply posted: user_id=%s channel_id=%s video_id=%s "
 			"youtube_comment_id=%s",
 			user_id,
 			channel_id,
