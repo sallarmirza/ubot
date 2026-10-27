@@ -12,6 +12,7 @@ class AnalyticsComment(BaseModel):
 	parent_youtube_comment_id: str | None
 	comment_text: str
 	ai_reply: str | None
+	awaiting_reply: bool
 	is_replied: bool
 	youtube_reply_id: str | None
 	reply_status: str
@@ -36,6 +37,8 @@ class SelectedVideoAnalytics(BaseModel):
 	selected_video_id: int
 	youtube_channel_id: str
 	channel_name: str
+	channel_subscribers: int
+	channel_views: int
 	youtube_video_id: str
 	title: str | None
 	description: str | None
@@ -45,6 +48,7 @@ class SelectedVideoAnalytics(BaseModel):
 	youtube_comment_count: int
 	saved_top_level_comments: int
 	saved_replies: int
+	awaiting_replies: int
 	generated_drafts: int
 	posted_replies: int
 	uncertain_replies: int

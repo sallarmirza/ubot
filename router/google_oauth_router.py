@@ -2,11 +2,13 @@ import secrets
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, ConfigDict
 from core.config import settings
 from core.dependencies import get_current_user
 from core.security import clear_auth_cookie, create_access_token, set_auth_cookie
 from db_manager import db_manager
 from db_model import User
+from repositories import auth_repository
 from schema.oauth_schema import GoogleOAuthError
 from services import auth_service
 from services import google_oauth_service as google
@@ -14,6 +16,12 @@ from services import google_oauth_service as google
 router=APIRouter(tags=["auth"])
 
 STATE_COOKIE="oauth_state"
+
+class CommentMonitoringSetting(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
 
 @router.get("/google/login")
 def google_login():
@@ -67,6 +75,8 @@ def google_callback(
             return failed("token_exchange")
         if str(exc).startswith("Fetching channels failed:"):
             return failed("channel_fetch")
+        if str(exc).startswith("Google account identity failed:"):
+            return failed("account_identity")
         return failed("no_youtube_channel")
 
     # Success: set the JWT on the same response we return, and clear the temporary state cookie
@@ -93,8 +103,72 @@ def channels(user: User = Depends(get_current_user)):
         for channel in user.youtube_channels
     ]
 
+@router.get("/comment-monitoring")
+def get_comment_monitoring(
+    db: Session = Depends(db_manager.get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return the signed-in user's automatic comment monitoring setting."""
+    return {
+        "enabled": auth_repository.is_comment_monitoring_enabled(db, user.user_id)
+    }
+
+
+@router.put("/comment-monitoring")
+def update_comment_monitoring(
+    payload: CommentMonitoringSetting,
+    db: Session = Depends(db_manager.get_db),
+    user: User = Depends(get_current_user),
+):
+    """Enable or pause automatic comment fetching and replies."""
+    try:
+        auth_repository.set_comment_monitoring_enabled(
+            db, user.user_id, payload.enabled
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"enabled": payload.enabled}
+
+
 @router.post("/logout")
-def logout(response: Response):
-    """Remove the JWT cookie."""
+def logout(
+    response: Response,
+    db: Session = Depends(db_manager.get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pause comment monitoring and remove the JWT cookie."""
+    try:
+        auth_repository.set_comment_monitoring_enabled(db, user.user_id, False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     clear_auth_cookie(response)
     return {"message": "logged out"}
+
+
+@router.post("/google/disconnect")
+def disconnect_google(
+    db: Session = Depends(db_manager.get_db),
+    user: User = Depends(get_current_user),
+):
+    """Revoke Google access and remove this user's channel data."""
+    auth_service.disconnect_google(db, user.user_id)
+    return {"message": "Google account disconnected"}
+
+
+@router.delete("/account")
+def delete_account(
+    response: Response,
+    db: Session = Depends(db_manager.get_db),
+    user: User = Depends(get_current_user),
+):
+    """Permanently erase this user's local account and clear their auth cookie."""
+    google_revoked = auth_service.delete_account(db, user.user_id)
+    clear_auth_cookie(response)
+    return {
+        "message": "Account deleted",
+        "google_revoked": google_revoked,
+    }

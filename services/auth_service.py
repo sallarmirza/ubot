@@ -1,23 +1,31 @@
 # services/auth_service.py
+import logging
 from datetime import datetime, timedelta, timezone
+
+import httpx
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
 from repositories import auth_repository as repo
 from schema.oauth_schema import GoogleOAuthError
 from services import google_oauth_service as google
+from db_model import UserOAuth
+
+
+logger = logging.getLogger(__name__)
 
 # run the app flow logic 
 def login_with_google(db: Session, code: str) -> int:
     """Code from Google in, user_id out."""
     # 1. Swap the code for tokens, then ask Google which channels this account owns
     tokens = google.exchange_code_for_tokens(code)
+    google_subject = google.fetch_google_subject(tokens["access_token"])
     channels = google.fetch_my_channels(tokens["access_token"])
     if not channels:
         raise GoogleOAuthError("No YouTube channel found on this Google account")
 
     # 2. Returning user -> reuse their user_id; new user -> create one
-    user_id = repo.find_user_id_by_channel_ids(
-        db, [c["youtube_channel_id"] for c in channels]
-    )
+    user_id = repo.find_user_id_by_google_subject(db, google_subject)
     if user_id is None:
         user_id = repo.create_user(db).user_id
 
@@ -28,6 +36,7 @@ def login_with_google(db: Session, code: str) -> int:
     repo.upsert_oauth(
         db,
         user_id=user_id,
+        google_subject=google_subject,
         access_token=tokens["access_token"],
         refresh_token=tokens.get("refresh_token"),
         expires_at=expires_at,
@@ -38,3 +47,48 @@ def login_with_google(db: Session, code: str) -> int:
     repo.upsert_channels(db, user_id, channels)
     db.commit()
     return user_id
+
+
+def disconnect_google(db: Session, user_id: int) -> None:
+    """Revoke Google access before removing the user's channel data."""
+    oauth = db.query(UserOAuth).filter_by(user_id=user_id).first()
+    if oauth is not None:
+        token = oauth.refresh_token or oauth.access_token
+        try:
+            google.revoke_token(token)
+        except (httpx.RequestError, GoogleOAuthError) as error:
+            raise HTTPException(
+                status_code=502,
+                detail="Google could not confirm disconnect; local data was retained",
+            ) from error
+
+    try:
+        repo.delete_google_connection(db, user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def delete_account(db: Session, user_id: int) -> bool:
+    """Best-effort revoke Google access, then transactionally erase local data."""
+    oauth = db.query(UserOAuth).filter_by(user_id=user_id).first()
+    google_revoked = oauth is None
+    if oauth is not None:
+        token = oauth.refresh_token or oauth.access_token
+        try:
+            google.revoke_token(token)
+            google_revoked = True
+        except (httpx.RequestError, GoogleOAuthError) as error:
+            logger.warning(
+                "Google token revocation could not be confirmed during account deletion: %s",
+                type(error).__name__,
+            )
+
+    try:
+        repo.delete_user_account(db, user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return google_revoked

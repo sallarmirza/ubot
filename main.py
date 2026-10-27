@@ -1,4 +1,6 @@
 # main.py 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -13,6 +15,7 @@ from router.ai_router import router as ai_router
 from router.analytics_router import router as analytics_router
 from router.demo_router import router as demo_router
 from router.comments_fetching_router import router as comments_fetching_router
+from router.contact_router import router as contact_router
 from router.google_oauth_router import router as oauth_router
 from router.selection_video_router import router as selection_video_router
 from services.http_clients import (
@@ -20,25 +23,62 @@ from services.http_clients import (
     get_async_http_client,
     get_sync_http_client,
 )
+from services.comment_monitor_service import run_comment_monitoring_loop
+from services.data_retention_service import run_data_retention_cleanup_loop
+from core.token_encryption import encrypt_legacy_oauth_tokens
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    comment_monitor_task = None
+    retention_cleanup_task = None
     try:
+        # Fail startup rather than serving requests with OAuth tokens left in plaintext.
+        encrypted_rows = encrypt_legacy_oauth_tokens(db_manager.engine)
+        if encrypted_rows:
+            logger.info("Encrypted legacy OAuth tokens for %s accounts", encrypted_rows)
         app.state.http_clients = (
             get_sync_http_client(),
             get_async_http_client(),
         )
+        comment_monitor_task = asyncio.create_task(
+            run_comment_monitoring_loop(),
+            name="comment-monitor",
+        )
+        retention_cleanup_task = asyncio.create_task(
+            run_data_retention_cleanup_loop(),
+            name="data-retention-cleanup",
+        )
         yield
     finally:
         try:
-            await close_http_clients()
+            background_tasks = [
+                task
+                for task in (
+                    comment_monitor_task,
+                    retention_cleanup_task,
+                )
+                if task is not None
+            ]
+            for task in background_tasks:
+                task.cancel()
+            for task in background_tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         finally:
             try:
-                db_manager.close()
+                await close_http_clients()
             finally:
-                if hasattr(app.state, "http_clients"):
-                    del app.state.http_clients
+                try:
+                    db_manager.close()
+                finally:
+                    if hasattr(app.state, "http_clients"):
+                        del app.state.http_clients
 
 
 app=FastAPI(title="Fastapi Backend", lifespan=lifespan)
@@ -66,6 +106,7 @@ app.include_router(analytics_router)
 app.include_router(demo_router)
 app.include_router(selection_video_router)
 app.include_router(comments_fetching_router)
+app.include_router(contact_router)
 app.mount("/test", StaticFiles(directory="test", html=True), name="test")
 
 

@@ -7,6 +7,8 @@ from core.security import COOKIE_NAME, decode_access_token
 from db_manager import db_manager 
 from db_model import User
 
+
+
 def get_current_user(
     access_token: str | None = Cookie(default=None, alias=COOKIE_NAME),
     db: Session = Depends(db_manager.get_db),) -> User:

@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from db_model import (
@@ -25,6 +26,27 @@ def get_selected_videos(db: Session, user_id: int) -> list[TargetVideo]:
 		.order_by(YoutubeChannel.channel_name, Videos.title, Videos.video_id)
 		.all()
 	)
+
+
+def get_latest_analytics_snapshots(
+	db: Session, selected_video_ids: list[int]
+) -> dict[int, Analytics]:
+	"""Return only the newest stored snapshot for each selected video."""
+	if not selected_video_ids:
+		return {}
+
+	latest_ids = (
+		db.query(func.max(Analytics.analytics_id).label("analytics_id"))
+		.filter(Analytics.selected_video_id.in_(selected_video_ids))
+		.group_by(Analytics.selected_video_id)
+		.subquery()
+	)
+	snapshots = (
+		db.query(Analytics)
+		.join(latest_ids, Analytics.analytics_id == latest_ids.c.analytics_id)
+		.all()
+	)
+	return {snapshot.selected_video_id: snapshot for snapshot in snapshots}
 
 
 def get_selected_video(

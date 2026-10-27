@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -85,11 +86,31 @@ def save_fetched_comments(
 	if len(comment_ids) != len(set(comment_ids)):
 		raise ValueError("Fetched comments contain duplicate YouTube comment IDs")
 
+	reply_sources = (
+		db.query(Comments)
+		.filter(
+			Comments.selected_video_id == selected_video_id,
+			Comments.youtube_reply_id.in_(comment_ids),
+		)
+		.all()
+	)
+	source_by_reply_id = {
+		comment.youtube_reply_id: comment
+		for comment in reply_sources
+		if comment.youtube_reply_id
+	}
 	existing_comments = (
 		db.query(Comments)
 		.filter(
 			Comments.selected_video_id == selected_video_id,
-			Comments.youtube_comment_id.in_(comment_ids),
+			Comments.youtube_comment_id.in_(
+				set(comment_ids)
+				| {item[2] for item in comment_data if item[2] is not None}
+				| {
+					comment.youtube_comment_id
+					for comment in reply_sources
+				}
+			),
 		)
 		.all()
 	)
@@ -101,13 +122,25 @@ def save_fetched_comments(
 		youtube_comment_id,
 		comment_text,
 		parent_youtube_comment_id,
+		thread_youtube_comment_id,
+		author_name,
 		author_channel_id,
+		published_at,
 		can_reply,
 	) in comment_data:
 		comment = by_youtube_id.get(youtube_comment_id)
+		answered_comment = source_by_reply_id.get(youtube_comment_id)
+		if answered_comment is not None:
+			parent_youtube_comment_id = answered_comment.youtube_comment_id
+			thread_youtube_comment_id = (
+				answered_comment.thread_youtube_comment_id
+				or answered_comment.youtube_comment_id.split(".")[0]
+			)
 		parent_comment = (
-			by_youtube_id[parent_youtube_comment_id]
-			if parent_youtube_comment_id is not None
+			answered_comment
+			if answered_comment is not None
+			else by_youtube_id[parent_youtube_comment_id]
+			if parent_youtube_comment_id in by_youtube_id
 			else None
 		)
 		if comment is None:
@@ -115,6 +148,10 @@ def save_fetched_comments(
 				selected_video_id=selected_video_id,
 				youtube_comment_id=youtube_comment_id,
 				comment_text=comment_text,
+				parent_youtube_comment_id=parent_youtube_comment_id,
+				thread_youtube_comment_id=thread_youtube_comment_id,
+				author_name=author_name,
+				published_at=published_at,
 				author_channel_id=author_channel_id,
 				can_reply=can_reply,
 				video_name=video_name,
@@ -122,8 +159,17 @@ def save_fetched_comments(
 			)
 			db.add(comment)
 			by_youtube_id[youtube_comment_id] = comment
+		elif comment.reply_status == "retained":
+			# Keep the minimal ID/status tombstone so old comments cannot be
+			# reprocessed after a YouTube refresh restores their text.
+			saved_comments.append(comment)
+			continue
 		else:
 			comment.comment_text = comment_text
+			comment.parent_youtube_comment_id = parent_youtube_comment_id
+			comment.thread_youtube_comment_id = thread_youtube_comment_id
+			comment.author_name = author_name
+			comment.published_at = published_at
 			comment.author_channel_id = author_channel_id
 			comment.can_reply = can_reply
 			comment.video_name = video_name
@@ -149,17 +195,29 @@ def delete_comment(
 
 def _flatten_fetched_comments(
 	comments: Sequence[Mapping[str, object]],
-) -> list[tuple[str, str, str | None, str | None, bool | None]]:
+) -> list[tuple[str, str, str | None, str | None, str | None, str | None, datetime | None, bool | None]]:
 	flattened = []
 
 	def visit(
 		items: Sequence[Mapping[str, object]],
 		parent_youtube_comment_id: str | None,
+		thread_youtube_comment_id: str | None,
 	) -> None:
 		for item in items:
 			if not isinstance(item, Mapping):
 				raise ValueError("Fetched comment must be a mapping")
 			youtube_comment_id, comment_text, author_channel_id = _comment_fields(item)
+			explicit_parent_id = item.get("parent_youtube_comment_id")
+			parent_id = (
+				explicit_parent_id
+				if isinstance(explicit_parent_id, str) and explicit_parent_id
+				else parent_youtube_comment_id
+			)
+			thread_id = thread_youtube_comment_id or youtube_comment_id
+			author_name = item.get("author_name")
+			if author_name is not None and not isinstance(author_name, str):
+				raise ValueError("Fetched comment author name must be a string")
+			published_at = _parse_published_at(item.get("published_at"))
 			can_reply = item.get("can_reply")
 			if can_reply is not None and not isinstance(can_reply, bool):
 				raise ValueError("Fetched comment replyability must be a boolean")
@@ -167,18 +225,32 @@ def _flatten_fetched_comments(
 				(
 					youtube_comment_id,
 					comment_text,
-					parent_youtube_comment_id,
+					parent_id,
+					thread_id,
+					author_name,
 					author_channel_id,
+					published_at,
 					can_reply,
 				)
 			)
 			replies = item.get("replies", [])
 			if not isinstance(replies, Sequence) or isinstance(replies, (str, bytes)):
 				raise ValueError("Fetched comment replies must be a sequence")
-			visit(replies, youtube_comment_id)
+			visit(replies, youtube_comment_id, thread_id)
 
-	visit(comments, None)
+	visit(comments, None, None)
 	return flattened
+
+
+def _parse_published_at(value: object) -> datetime | None:
+	if not isinstance(value, str) or not value:
+		return None
+	try:
+		return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(
+			tzinfo=None
+		)
+	except ValueError:
+		return None
 
 
 def _comment_fields(

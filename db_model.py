@@ -1,8 +1,10 @@
 # app/models.py
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    UniqueConstraint, func
 )
 from sqlalchemy.orm import relationship
+from core.token_encryption import EncryptedToken
 from db_manager import Base
 
 
@@ -26,13 +28,18 @@ class User(Base):
 
 class UserOAuth(Base):
     __tablename__ = "user_oauth"
+    __table_args__ = (
+        Index("uq_user_oauth_google_subject", "google_subject", unique=True),
+    )
 
     oauth_id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False, unique=True)
-    access_token = Column(Text, nullable=False)
-    refresh_token = Column(Text, nullable=True)
+    google_subject = Column(String(255), nullable=True)
+    access_token = Column(EncryptedToken(), nullable=False)
+    refresh_token = Column(EncryptedToken(), nullable=True)
     expires_at = Column(DateTime, nullable=True)
     scopes = Column(Text, nullable=True)
+    comment_monitoring_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -181,6 +188,11 @@ class Comments(Base):
 
     # The comment's ID on YouTube (e.g. "UgxABC..."), used when posting replies.
     youtube_comment_id = Column(String(100), nullable=False)
+    # Preserve YouTube's branch parent and root thread independently of API flattening.
+    parent_youtube_comment_id = Column(String(100), nullable=True)
+    thread_youtube_comment_id = Column(String(100), nullable=True)
+    author_name = Column(String(255), nullable=True)
+    published_at = Column(DateTime, nullable=True)
     # Identifies comments written by the channel so polling never answers itself.
     author_channel_id = Column(String(100), nullable=True)
     # YouTube exposes replyability at the thread level; replies inherit it.
@@ -223,6 +235,12 @@ class Comments(Base):
 
 class Analytics(Base):
     __tablename__ = "analytics"
+    __table_args__ = (
+        UniqueConstraint(
+            "selected_video_id",
+            name="uq_analytics_selected_video",
+        ),
+    )
 
     analytics_id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)

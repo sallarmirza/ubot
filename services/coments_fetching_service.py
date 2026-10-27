@@ -1,8 +1,11 @@
+import logging
+import time
+
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from repositories import ai_repo, coments_feching_repo
+from repositories import ai_repo, auth_repository, coments_feching_repo
 from services import ai_service
 from services.http_clients import get_sync_http_client
 from services.selection_video_service import YOUTUBE_API, _get_access_token
@@ -12,6 +15,70 @@ from services.selection_video_service import YOUTUBE_API, _get_access_token
 DEFAULT_MAX_COMMENTS = 100
 # Maximum number of replies to fetch for a single top-level comment.
 DEFAULT_MAX_REPLIES = 50
+logger = logging.getLogger(__name__)
+
+
+def collect_youtube_comment_ids(comments: list[dict]) -> set[str]:
+	comment_ids: set[str] = set()
+	pending = list(comments)
+	while pending:
+		comment = pending.pop()
+		comment_id = comment.get("youtube_comment_id")
+		if isinstance(comment_id, str) and comment_id:
+			comment_ids.add(comment_id)
+		replies = comment.get("replies", [])
+		if isinstance(replies, list):
+			pending.extend(replies)
+	return comment_ids
+
+
+def collect_replied_youtube_comment_ids(
+	comments: list[dict], channel_id: str
+) -> set[str]:
+	"""Match flat channel replies to saved targets, then unique @mentions."""
+	replied_comment_ids: set[str] = set()
+	for thread in comments:
+		items = [thread]
+		replies = thread.get("replies", [])
+		if isinstance(replies, list):
+			items.extend(replies)
+		viewer_comments = [
+			item for item in items
+			if item.get("author_channel_id") != channel_id
+		]
+		for reply in items:
+			if reply.get("author_channel_id") != channel_id:
+				continue
+			reply_id = reply.get("youtube_comment_id")
+			tracked_targets = [
+				viewer_comment
+				for viewer_comment in viewer_comments
+				if viewer_comment.get("youtube_reply_id") == reply_id
+			]
+			if len(tracked_targets) == 1:
+				comment_id = tracked_targets[0].get("youtube_comment_id")
+				if isinstance(comment_id, str) and comment_id:
+					replied_comment_ids.add(comment_id)
+				continue
+
+			reply_text = str(reply.get("text", "")).strip().casefold()
+			mention_matches = []
+			for viewer_comment in viewer_comments:
+				author_name = viewer_comment.get("author_name")
+				if not isinstance(author_name, str) or not author_name.strip():
+					continue
+				mention = f"@{author_name.lstrip('@').strip()}".casefold()
+				if reply_text.startswith(mention) and (
+					len(reply_text) == len(mention)
+					or not reply_text[len(mention)].isalnum()
+				):
+					mention_matches.append(viewer_comment)
+			if len(mention_matches) == 1:
+				comment_id = mention_matches[0].get("youtube_comment_id")
+				if isinstance(comment_id, str) and comment_id:
+					replied_comment_ids.add(comment_id)
+
+	return replied_comment_ids
 
 
 class _BearerAuth(httpx.Auth):
@@ -68,6 +135,7 @@ def _format_comment(item: dict) -> dict:
 
 	return {
 		"youtube_comment_id": item.get("id", ""),
+		"parent_youtube_comment_id": snippet.get("parentId"),
 		"author_name": snippet.get("authorDisplayName", ""),
 		"author_channel_id": (
 			snippet.get("authorChannelId", {}).get("value")
@@ -107,7 +175,11 @@ def _get_replies(
 			params["pageToken"] = page_token
 
 		page = _youtube_get(access_token, "comments", params)
-		replies.extend(_format_comment(item) for item in page.get("items", []))
+		replies.extend(
+			_format_comment(item)
+			for item in page.get("items", [])
+			if isinstance(item, dict)
+		)
 
 		# No next page token means there are no more replies to fetch.
 		page_token = page.get("nextPageToken")
@@ -116,6 +188,11 @@ def _get_replies(
 
 	# Safety: never return more than the requested limit.
 	return replies if max_replies is None else replies[:max_replies]
+
+
+def get_direct_comment_replies(access_token: str, comment_id: str) -> list[dict]:
+	"""Fetch direct replies to one comment for duplicate reconciliation."""
+	return _get_replies(access_token, comment_id, max_replies=None)
 
 
 def _get_all_comments(
@@ -154,7 +231,7 @@ def _get_all_comments(
 			thread_snippet = thread.get("snippet", {})
 			top_level = thread_snippet.get("topLevelComment", {})
 			comment = _format_comment(top_level)
-			can_reply = thread.get("canReply")
+			can_reply = thread_snippet.get("canReply") if "canReply" in thread_snippet else thread.get("canReply")
 			comment["can_reply"] = can_reply if isinstance(can_reply, bool) else None
 
 			parent_id = top_level.get("id", "")
@@ -233,6 +310,7 @@ def fetch_video_comments(
 
 	# `None` fetches every API page for the explicit generate-and-post action;
 	# regular UI requests retain their bounded defaults.
+	fetch_started_at = time.perf_counter()
 	comments = _get_all_comments(
 		access_token,
 		video_id,
@@ -254,4 +332,14 @@ def fetch_video_comments(
 		db.rollback()
 		raise HTTPException(status_code=422, detail=str(error)) from error
 
+	logger.info(
+		"YouTube comments fetched: user_id=%s channel_id=%s video_id=%s "
+		"top_level=%s total=%s duration_ms=%s",
+		user_id,
+		channel_id,
+		video_id,
+		len(comments),
+		len(collect_youtube_comment_ids(comments)),
+		round((time.perf_counter() - fetch_started_at) * 1000),
+	)
 	return comments

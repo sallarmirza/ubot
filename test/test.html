@@ -42,6 +42,34 @@
 		button.secondary { background: transparent; color: #42524d; }
 		button.secondary:hover { background: #edf2ef; }
 		.demo-entry { margin-top: 24px; }
+		.core-card {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+			margin-top: 16px;
+			padding: 18px;
+			background: #fff;
+			border: 1px solid #e1e8e3;
+			border-radius: 8px;
+		}
+		.core-card h2 { margin-bottom: 4px; }
+		.core-card p { margin: 0; color: #60706a; font-size: 14px; }
+		.core-card-link {
+			display: inline-flex;
+			align-items: center;
+			min-height: 40px;
+			padding: 0 16px;
+			border-radius: 5px;
+			background: #176b52;
+			color: #fff;
+			font-size: 14px;
+			font-weight: 600;
+			text-decoration: none;
+			white-space: nowrap;
+		}
+		.core-card-link:hover { background: #105640; }
+		.core-card-link:focus-visible { outline: 3px solid #90cbb2; outline-offset: 2px; }
 		main { width: min(880px, calc(100% - 40px)); margin: 58px auto; }
 		.eyebrow { color: #58756a; font-size: 12px; font-weight: 700; text-transform: uppercase; }
 		h1 { margin: 10px 0 8px; font-size: clamp(28px, 5vw, 38px); font-weight: 650; }
@@ -181,6 +209,7 @@
 		@media (max-width: 520px) {
 			header { padding: 0 18px; }
 			main { margin: 38px auto; }
+			.core-card { align-items: flex-start; flex-direction: column; }
 			.channel { grid-template-columns: 1fr; }
 			.stats { gap: 16px; flex-wrap: wrap; }
 			#business-profile, #interactive-demo { padding: 18px; }
@@ -206,6 +235,15 @@
 		<div class="demo-entry">
 			<button id="open-demo-button" class="secondary" type="button">Try the interactive demo</button>
 		</div>
+		<aside class="core-card" aria-labelledby="leadhive-heading">
+			<div>
+				<h2 id="leadhive-heading">LeadHive</h2>
+				<p>Explore the LeadHive sales-intelligence platform.</p>
+			</div>
+			<a class="core-card-link" href="https://leadhivee.vercel.app/" target="_blank" rel="noopener noreferrer">
+				Open LeadHive
+			</a>
+		</aside>
 		<section id="interactive-demo" aria-labelledby="demo-heading" hidden>
 			<div class="section-heading" style="margin-top: 0">
 				<div>
@@ -782,7 +820,7 @@
 					error.textContent = `Draft error: ${comment.error}`;
 					item.append(error);
 				}
-				if (!isReply && (comment.ai_reply || comment.error) && !comment.is_replied) {
+				if ((comment.ai_reply || comment.error) && !comment.is_replied) {
 					const actions = document.createElement("div");
 					actions.className = "comment-actions";
 					if (!["posting", "unknown"].includes(comment.reply_status)) {

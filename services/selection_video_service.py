@@ -183,6 +183,43 @@ def _video_details(access_token: str, video_ids: list[str]) -> dict[str, dict]:
 	return details
 
 
+def fetch_video_statistics(
+	db: Session, user_id: int, video_ids: list[str]
+) -> dict[str, dict]:
+	"""Fetch current YouTube statistics for video IDs owned by this user."""
+	if not video_ids:
+		return {}
+	return _video_details(_get_access_token(db, user_id), video_ids)
+
+
+def fetch_channel_statistics(
+	db: Session, user_id: int, channel_ids: list[str]
+) -> dict[str, dict]:
+	"""Fetch current YouTube channel names and statistics by channel ID."""
+	if not channel_ids:
+		return {}
+
+	access_token = _get_access_token(db, user_id)
+	channels = {}
+	for start in range(0, len(channel_ids), 50):
+		response = _youtube_get(
+			access_token,
+			"channels",
+			{
+				"part": "snippet,statistics",
+				"id": ",".join(channel_ids[start : start + 50]),
+			},
+		)
+		for item in response.get("items", []):
+			statistics = item.get("statistics", {})
+			channels[item["id"]] = {
+				"channel_name": item.get("snippet", {}).get("title", ""),
+				"channel_subscribers": _count(statistics, "subscriberCount"),
+				"channel_views": _count(statistics, "viewCount"),
+			}
+	return channels
+
+
 def _extract_channel_videos(
 	access_token: str, channel_id: str, limit: int
 ) -> list[dict]:

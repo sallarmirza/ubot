@@ -1,9 +1,7 @@
 
 from datetime import datetime, timedelta, timezone
-
 import jwt
 from fastapi import Response
-
 from core.config import settings
 
 ALGORITHM = "HS256"

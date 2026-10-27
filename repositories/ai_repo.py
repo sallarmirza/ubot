@@ -1,5 +1,8 @@
+from hashlib import sha256
+
+from sqlalchemy import and_, func, or_, text, update
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
-from sqlalchemy import func, update
 from sqlalchemy.orm.attributes import set_committed_value
 
 from db_model import (
@@ -7,6 +10,7 @@ from db_model import (
 	Comments,
 	TargetChannel,
 	TargetVideo,
+	UserOAuth,
 	Videos,
 	YoutubeChannel,
 )
@@ -82,9 +86,11 @@ def get_selected_videos_for_monitoring(db: Session) -> list[tuple[int, str, str]
 		.join(TargetChannel, TargetChannel.channel_id == YoutubeChannel.channel_id)
 		.join(Videos, Videos.target_channel_id == TargetChannel.target_channel_id)
 		.join(TargetVideo, TargetVideo.video_id == Videos.video_id)
+		.join(UserOAuth, UserOAuth.user_id == YoutubeChannel.user_id)
 		.filter(
 			TargetChannel.user_id == YoutubeChannel.user_id,
 			TargetVideo.user_id == YoutubeChannel.user_id,
+			UserOAuth.comment_monitoring_enabled.is_(True),
 		)
 		.order_by(YoutubeChannel.user_id, Videos.video_id)
 		.all()
@@ -96,6 +102,7 @@ def get_video_comments(db: Session, selected_video_id: int) -> list[Comments]:
 	return (
 		db.query(Comments)
 		.filter_by(selected_video_id=selected_video_id)
+		.order_by(Comments.comment_id)
 		.all()
 	)
 
@@ -140,6 +147,26 @@ def has_replies(db: Session, comment_id: int) -> bool:
 
 
 def save_reply_draft(db: Session, comment: Comments, ai_reply: str) -> None:
+	# Treat explicit SKIP replies from the AI as a decision not to reply.
+	if isinstance(ai_reply, str) and ai_reply.strip().upper() == "SKIP":
+		# Atomically mark the comment as skipped so it won't be retried.
+		result = db.execute(
+			update(Comments)
+			.where(
+				Comments.comment_id == comment.comment_id,
+				Comments.is_replied.is_(False),
+				Comments.reply_status.in_(("draft", "processing")),
+			)
+			.values(ai_reply=None, is_replied=False, reply_status="skipped")
+			.execution_options(synchronize_session=False)
+		)
+		if result.rowcount != 1:
+			raise ValueError("Reply posting is in progress or has an uncertain outcome")
+		set_committed_value(comment, "ai_reply", None)
+		set_committed_value(comment, "is_replied", False)
+		set_committed_value(comment, "reply_status", "skipped")
+		return
+
 	if not ai_reply or len(ai_reply) > 800:
 		raise ValueError("AI reply must contain between 1 and 800 characters")
 	if comment.is_replied:
@@ -149,7 +176,7 @@ def save_reply_draft(db: Session, comment: Comments, ai_reply: str) -> None:
 		.where(
 			Comments.comment_id == comment.comment_id,
 			Comments.is_replied.is_(False),
-			Comments.reply_status == "draft",
+			Comments.reply_status == "processing",
 		)
 		.values(ai_reply=ai_reply)
 		.execution_options(synchronize_session=False)
@@ -157,6 +184,222 @@ def save_reply_draft(db: Session, comment: Comments, ai_reply: str) -> None:
 	if result.rowcount != 1:
 		raise ValueError("Reply posting is in progress or has an uncertain outcome")
 	set_committed_value(comment, "ai_reply", ai_reply)
+
+
+def claim_reply_processing(
+	db: Session,
+	comment: Comments,
+	author_channel_id: str,
+	max_replies_per_thread: int,
+	stale_before,
+) -> str:
+	"""Claim a viewer comment before LLM work and enforce the thread limit atomically."""
+	thread_id = comment.thread_youtube_comment_id or comment.youtube_comment_id
+	root = (
+		db.query(Comments)
+		.filter(
+			Comments.selected_video_id == comment.selected_video_id,
+			Comments.youtube_comment_id == thread_id,
+		)
+		.with_for_update()
+		.first()
+	)
+	if root is None:
+		raise ValueError("Comment thread root is missing")
+
+	if comment.parent_youtube_comment_id and comment.published_at:
+		older_unanswered = (
+			db.query(Comments.comment_id)
+			.filter(
+				Comments.selected_video_id == comment.selected_video_id,
+				Comments.thread_youtube_comment_id == thread_id,
+				Comments.parent_youtube_comment_id
+				== comment.parent_youtube_comment_id,
+				or_(
+					Comments.published_at < comment.published_at,
+					and_(
+						Comments.published_at == comment.published_at,
+						Comments.comment_id < comment.comment_id,
+					),
+					and_(
+						Comments.published_at.is_(None),
+						Comments.comment_id < comment.comment_id,
+					),
+				),
+				or_(
+					Comments.author_channel_id.is_(None),
+					Comments.author_channel_id != author_channel_id,
+				),
+				Comments.is_replied.is_(False),
+				~Comments.reply_status.in_(("posted", "skipped", "retained")),
+			)
+			.first()
+		)
+		if older_unanswered is not None:
+			db.rollback()
+			return "older_pending"
+
+	active_sources = db.query(
+		Comments.comment_id, Comments.youtube_reply_id
+	).filter(
+		Comments.selected_video_id == comment.selected_video_id,
+		Comments.thread_youtube_comment_id == thread_id,
+		Comments.reply_status.in_(("processing", "posting", "unknown", "posted")),
+	).all()
+	active_source_ids = {
+		row.comment_id
+		for row in active_sources
+		if row.comment_id != comment.comment_id
+	}
+	linked_reply_ids = {
+		row.youtube_reply_id for row in active_sources if row.youtube_reply_id
+	}
+	existing_bot_reply_ids = {
+		row.youtube_comment_id
+		for row in db.query(Comments.youtube_comment_id)
+		.filter(
+			Comments.selected_video_id == comment.selected_video_id,
+			Comments.thread_youtube_comment_id == thread_id,
+			Comments.author_channel_id == author_channel_id,
+			Comments.parent_youtube_comment_id.is_not(None),
+		)
+		.all()
+		if row.youtube_comment_id not in linked_reply_ids
+	}
+	active_count = len(active_source_ids) + len(existing_bot_reply_ids)
+	if active_count >= max_replies_per_thread:
+		db.rollback()
+		return "limit"
+
+	retryable = or_(
+		Comments.reply_status.in_(("draft", "failed")),
+		(
+			Comments.reply_status.in_(("processing", "posting", "unknown"))
+			& (Comments.reply_posting_started_at < stale_before)
+		),
+	)
+	result = db.execute(
+		update(Comments)
+		.where(
+			Comments.comment_id == comment.comment_id,
+			Comments.is_replied.is_(False),
+			or_(
+				Comments.author_channel_id.is_(None),
+				Comments.author_channel_id != author_channel_id,
+			),
+			retryable,
+		)
+		.values(reply_status="processing", reply_posting_started_at=func.now())
+		.execution_options(synchronize_session=False)
+	)
+	if result.rowcount != 1:
+		db.rollback()
+		return "already_claimed"
+	db.commit()
+	return "claimed"
+
+
+def acquire_comment_branch_lock(
+	db: Session, comment: Comments
+) -> tuple[Connection, int]:
+	"""Serialize work on one reply branch while allowing other branches to run."""
+	branch_id = (
+		getattr(comment, "parent_youtube_comment_id", None)
+		or getattr(comment, "thread_youtube_comment_id", None)
+		or comment.youtube_comment_id
+	)
+	lock_id = int.from_bytes(
+		sha256(
+			f"{getattr(comment, 'selected_video_id', 0)}:{branch_id}".encode("utf-8")
+		).digest()[:8],
+		byteorder="big",
+		signed=True,
+	)
+	connection = db.get_bind().connect()
+	connection.execute(
+		text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id}
+	)
+	return connection, lock_id
+
+
+def release_comment_branch_lock(lock: tuple[Connection, int]) -> None:
+	connection, _ = lock
+	connection.rollback()
+	connection.close()
+
+
+def mark_reply_failed(db: Session, comment_id: int) -> None:
+	"""Make a definitively unsuccessful generation or post retryable."""
+	db.execute(
+		update(Comments)
+		.where(
+			Comments.comment_id == comment_id,
+			Comments.reply_status.in_(("processing", "posting")),
+		)
+		.values(reply_status="failed", reply_posting_started_at=None)
+		.execution_options(synchronize_session=False)
+	)
+	db.commit()
+
+
+def mark_reply_skipped(db: Session, comment_id: int) -> None:
+	db.execute(
+		update(Comments)
+		.where(
+			Comments.comment_id == comment_id,
+			Comments.reply_status.in_(("draft", "failed", "processing")),
+		)
+		.values(reply_status="skipped", reply_posting_started_at=None)
+		.execution_options(synchronize_session=False)
+	)
+	db.commit()
+
+
+def mark_reply_found(
+	db: Session, comment_id: int, youtube_reply_id: str
+) -> None:
+	db.execute(
+		update(Comments)
+		.where(Comments.comment_id == comment_id, Comments.is_replied.is_(False))
+		.values(
+			youtube_reply_id=youtube_reply_id,
+			is_replied=True,
+			reply_status="posted",
+			reply_posting_started_at=None,
+		)
+		.execution_options(synchronize_session=False)
+	)
+	db.commit()
+
+
+def retry_skipped_reply(db: Session, comment: Comments) -> bool:
+	"""Reopen a skipped comment for a new explicit reply attempt."""
+	result = db.execute(
+		update(Comments)
+		.where(
+			Comments.comment_id == comment.comment_id,
+			Comments.reply_status == "skipped",
+			Comments.youtube_reply_id.is_(None),
+		)
+		.values(
+			ai_reply=None,
+			is_replied=False,
+			can_reply=True,
+			reply_status="draft",
+			reply_posting_started_at=None,
+		)
+		.execution_options(synchronize_session=False)
+	)
+	if result.rowcount != 1:
+		db.rollback()
+		return False
+	set_committed_value(comment, "ai_reply", None)
+	set_committed_value(comment, "is_replied", False)
+	set_committed_value(comment, "can_reply", True)
+	set_committed_value(comment, "reply_status", "draft")
+	set_committed_value(comment, "reply_posting_started_at", None)
+	db.commit()
+	return True
 
 
 def claim_reply_posting(db: Session, comment_id: int) -> bool:
@@ -167,7 +410,7 @@ def claim_reply_posting(db: Session, comment_id: int) -> bool:
 			Comments.comment_id == comment_id,
 			Comments.is_replied.is_(False),
 			Comments.ai_reply.is_not(None),
-			Comments.reply_status == "draft",
+			Comments.reply_status.in_(("draft", "processing")),
 		)
 		.values(reply_status="posting", reply_posting_started_at=func.now())
 		.execution_options(synchronize_session=False)
@@ -180,11 +423,11 @@ def claim_reply_posting(db: Session, comment_id: int) -> bool:
 
 
 def release_reply_posting(db: Session, comment_id: int) -> None:
-	"""Make a draft retryable when YouTube definitively did not accept it."""
+	"""Mark a definitively unsuccessful YouTube post as retryable."""
 	db.execute(
 		update(Comments)
 		.where(Comments.comment_id == comment_id, Comments.reply_status == "posting")
-		.values(reply_status="draft", reply_posting_started_at=None)
+		.values(reply_status="failed", reply_posting_started_at=None)
 		.execution_options(synchronize_session=False)
 	)
 	db.commit()
@@ -194,8 +437,11 @@ def mark_reply_posting_unknown(db: Session, comment_id: int) -> None:
 	"""Prevent unsafe retries when YouTube may have accepted an uncertain request."""
 	db.execute(
 		update(Comments)
-		.where(Comments.comment_id == comment_id, Comments.reply_status == "posting")
-		.values(reply_status="unknown")
+		.where(
+			Comments.comment_id == comment_id,
+			Comments.reply_status.in_(("processing", "posting", "unknown")),
+		)
+		.values(reply_status="unknown", reply_posting_started_at=func.now())
 		.execution_options(synchronize_session=False)
 	)
 	db.commit()
