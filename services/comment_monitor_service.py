@@ -8,7 +8,7 @@ from repositories import ai_repo, auth_repository
 from services import ai_service, coments_fetching_service
 
 
-COMMENT_FETCH_INTERVAL_SECONDS = 10
+COMMENT_FETCH_INTERVAL_SECONDS = 5 * 60
 logger = logging.getLogger(__name__)
 
 

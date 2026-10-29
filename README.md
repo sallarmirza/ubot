@@ -93,7 +93,7 @@ Save a business profile and select videos to enable contextual AI replies.
 The background monitor automatically fetches comments and generates/posts
 replies for eligible comments on selected videos while the account is signed
 in. On startup, it processes the currently visible unreplied backlog and fetches
-every page of comments and replies on each scan. It polls every 10 seconds.
+every page of comments and replies on each scan. It polls every 5 minutes.
 This requires the account's Google authorization to include YouTube posting
 access. The explicit “Generate & Post Replies” action remains available too.
 
