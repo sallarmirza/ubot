@@ -26,6 +26,18 @@ class User(Base):
     analytics = relationship("Analytics", back_populates="user")
 
 
+class DemoSession(Base):
+    __tablename__ = "demo_sessions"
+
+    session_token_hash = Column(String(64), primary_key=True)
+    comment_count = Column(Integer, nullable=False, default=0)
+    blocked = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class UserOAuth(Base):
     __tablename__ = "user_oauth"
     __table_args__ = (

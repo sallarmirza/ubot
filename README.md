@@ -78,6 +78,11 @@ available only while monitoring is enabled.
 
 ## AI comment reply drafts
 
+The public demo allows two AI replies per browser session. Its `HttpOnly` demo
+cookie is tracked in PostgreSQL, so restarting the backend does not reset the
+limit; clearing the cookie or using another browser creates a new anonymous
+session.
+
 Set `AI_API_KEY` in the local environment to enable AI-generated drafts. The
 optional `AI_BASE_URL` defaults to `https://api.openai.com/v1`, and `AI_MODEL`
 defaults to `gpt-4o-mini`; any provider exposing the OpenAI-compatible
