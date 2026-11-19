@@ -75,13 +75,16 @@ def get_comments(db: Session, selected_video_id: int) -> list[Comments]:
 	)
 
 
-def get_selected_videos_for_monitoring(db: Session) -> list[tuple[int, str, str]]:
+def get_selected_videos_for_monitoring(
+	db: Session,
+) -> list[tuple[int, str, str, int]]:
 	"""List selected videos with the owner and YouTube channel needed to poll."""
 	rows = (
 		db.query(
 			YoutubeChannel.user_id,
 			YoutubeChannel.youtube_channel_id,
 			Videos.youtube_video_id,
+			UserOAuth.comment_fetch_interval_minutes,
 		)
 		.join(TargetChannel, TargetChannel.channel_id == YoutubeChannel.channel_id)
 		.join(Videos, Videos.target_channel_id == TargetChannel.target_channel_id)
@@ -95,7 +98,7 @@ def get_selected_videos_for_monitoring(db: Session) -> list[tuple[int, str, str]
 		.order_by(YoutubeChannel.user_id, Videos.video_id)
 		.all()
 	)
-	return [(row[0], row[1], row[2]) for row in rows]
+	return [(row[0], row[1], row[2], row[3] or 5) for row in rows]
 
 
 def get_video_comments(db: Session, selected_video_id: int) -> list[Comments]:

@@ -89,12 +89,31 @@
 		#channels { list-style: none; padding: 0; margin: 0; }
 		.channel {
 			display: grid;
-			grid-template-columns: minmax(0, 1fr) auto;
+			grid-template-columns: 52px minmax(0, 1fr);
 			gap: 8px 20px;
 			padding: 19px 0;
 			border-bottom: 1px solid #e1e8e3;
 			animation: arrive 300ms ease both;
 		}
+		.channel-avatar {
+			grid-column: 1;
+			grid-row: 1;
+			width: 48px;
+			height: 48px;
+			display: grid;
+			place-items: center;
+			overflow: hidden;
+			border-radius: 50%;
+			background: #e8f4ed;
+			color: #176b52;
+			font-weight: 700;
+		}
+		.channel-avatar img {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+		}
+		.channel-identity { grid-column: 2; min-width: 0; }
 		.channel-name { min-width: 0; overflow-wrap: anywhere; font-weight: 650; }
 		.channel-id { color: #77857f; font-size: 12px; }
 		.stats { grid-column: 1 / -1; display: flex; gap: 24px; color: #52645c; font-size: 13px; }
@@ -546,6 +565,24 @@
 				const row = document.createElement("li");
 				row.className = "channel";
 				row.style.animationDelay = `${index * 45}ms`;
+				const avatar = document.createElement("div");
+				avatar.className = "channel-avatar";
+				avatar.setAttribute("aria-hidden", "true");
+				const fallback = document.createElement("span");
+				fallback.textContent = (channel.channel_name || "?").trim().charAt(0).toUpperCase() || "?";
+				avatar.append(fallback);
+				if (channel.channel_thumbnail_url) {
+					const image = document.createElement("img");
+					image.src = channel.channel_thumbnail_url;
+					image.alt = "";
+					image.loading = "lazy";
+					image.referrerPolicy = "no-referrer";
+					image.addEventListener("error", () => image.remove());
+					fallback.hidden = true;
+					avatar.append(image);
+				}
+				const identity = document.createElement("div");
+				identity.className = "channel-identity";
 				const name = document.createElement("div");
 				name.className = "channel-name";
 				name.textContent = channel.channel_name;
@@ -568,7 +605,8 @@
 				videosButton.textContent = "Fetch videos";
 				videosButton.addEventListener("click", () => loadChannelVideos(channel));
 				actions.append(profileButton, videosButton);
-				row.append(name, id, stats, actions);
+				identity.append(name, id);
+				row.append(avatar, identity, stats, actions);
 				channelList.append(row);
 			});
 		}

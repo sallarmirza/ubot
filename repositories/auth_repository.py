@@ -12,6 +12,8 @@ from db_model import (
     YoutubeChannel,
 )
 
+DEFAULT_COMMENT_FETCH_INTERVAL_MINUTES = 5
+
 
 def find_user_id_by_google_subject(db: Session, google_subject: str) -> int | None:
     """Return the user associated with this stable Google account identifier."""
@@ -63,13 +65,41 @@ def is_comment_monitoring_enabled(db: Session, user_id: int) -> bool:
     return bool(enabled)
 
 
+def get_comment_monitoring_settings(db: Session, user_id: int) -> dict:
+    """Return saved comment-monitoring preferences, including legacy defaults."""
+    settings = (
+        db.query(
+            UserOAuth.comment_monitoring_enabled,
+            UserOAuth.comment_fetch_interval_minutes,
+        )
+        .filter_by(user_id=user_id)
+        .first()
+    )
+    if settings is None:
+        return {
+            "enabled": False,
+            "comment_fetch_interval_minutes": DEFAULT_COMMENT_FETCH_INTERVAL_MINUTES,
+        }
+    return {
+        "enabled": bool(settings[0]),
+        "comment_fetch_interval_minutes": (
+            settings[1] or DEFAULT_COMMENT_FETCH_INTERVAL_MINUTES
+        ),
+    }
+
+
 def set_comment_monitoring_enabled(
-    db: Session, user_id: int, enabled: bool
+    db: Session,
+    user_id: int,
+    enabled: bool,
+    comment_fetch_interval_minutes: int | None = None,
 ) -> None:
-    """Pause or resume background comment monitoring for one account."""
+    """Update monitoring/reply preference and optionally its fetch interval."""
     oauth = db.query(UserOAuth).filter_by(user_id=user_id).first()
     if oauth is not None:
         oauth.comment_monitoring_enabled = enabled
+        if comment_fetch_interval_minutes is not None:
+            oauth.comment_fetch_interval_minutes = comment_fetch_interval_minutes
 
 
 def upsert_channels(db: Session, user_id: int, channels: list[dict]) -> None:
@@ -86,6 +116,7 @@ def upsert_channels(db: Session, user_id: int, channels: list[dict]) -> None:
         row.channel_name = ch["channel_name"]
         row.channel_subscribers = ch["channel_subscribers"]
         row.channel_views = ch["channel_views"]
+        row.channel_thumbnail_url = ch.get("channel_thumbnail_url")
 
 
 def delete_google_connection(db: Session, user_id: int) -> None:

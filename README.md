@@ -34,6 +34,12 @@ OAuth records have no Google subject to backfill automatically, so users may
 receive new account records after signing in; existing channel/video data is
 not deleted, but may need a deliberate account-specific data migration.
 
+Channel sign-in also saves the YouTube channel thumbnail URL and returns it as
+`channel_thumbnail_url` from `GET /auth/channels`. Apply
+`scripts/migrate_youtube_channel_thumbnail.sql` to existing PostgreSQL
+databases. Existing channels without a stored thumbnail return `null` until
+the user signs in again and Google channel metadata is refreshed.
+
 ## OAuth security and account lifecycle
 
 Set `TOKEN_ENCRYPTION_KEY` in each backend environment before starting the
@@ -53,7 +59,9 @@ cookie without deleting saved data. Signing in with Google again resumes
 monitoring. A rejected Google token also pauses monitoring until the next sign
 in, preventing repeated unauthorized requests. Before deploying this behavior
 to an existing PostgreSQL database, apply
-`scripts/migrate_comment_monitoring.sql`.
+`scripts/migrate_comment_monitoring.sql`. Apply
+`scripts/migrate_comment_fetch_interval.sql` to add the saved interval to an
+existing database; existing accounts receive the 5-minute default.
 
 `POST /auth/google/disconnect` revokes the Google grant and removes that user's
 channel-linked application data while retaining the stable account identity
@@ -69,12 +77,50 @@ than 30 days are deleted. OAuth credentials, account records, channel setup,
 and comments with an uncertain in-progress posting outcome are not removed by
 the retention task.
 
-Automatic comment fetching and replies are controlled per signed-in user with
-`GET /auth/comment-monitoring` and `PUT /auth/comment-monitoring` using
-`{"enabled": true}` or `{"enabled": false}`. When disabled, `GET /comments/...`
-returns saved comments without contacting YouTube, so the frontend can continue
-showing its awaiting-reply count. Reply-generation and posting endpoints are
-available only while monitoring is enabled.
+Automatic comment monitoring and AI replies are controlled per signed-in
+account with `GET /auth/comment-monitoring` and `PUT /auth/comment-monitoring`.
+The GET response includes `enabled` and `comment_fetch_interval_minutes`
+(default `5`). PUT accepts `enabled` and optionally
+`comment_fetch_interval_minutes`, an integer from 1 through 1440. Omitting the
+interval preserves its saved value for older clients; invalid values return
+HTTP 422. The existing background monitor is the only background fetch
+scheduler and uses this per-account interval for selected videos.
+
+When `enabled` is false, automatic reply generation and posting are blocked.
+The comments endpoint can still fetch comments and returns the saved reply
+status/count data; loading comments does not generate or post replies. Reply
+generation and posting endpoints remain available only while `enabled` is true.
+Frontend clients should GET this preference when loading the setting, send the
+selected interval on updates, and use the returned value for any visible
+comments-panel refresh timer rather than creating a second background
+comment-fetch scheduler. The current backend worker honors changes within one
+minute.
+
+The channel persona API also exposes this same account-level preference:
+`GET /business-profile/{channel_id}` returns `comment_fetch_interval_minutes`,
+and `POST /business-profile/save` accepts it alongside the persona fields.
+Saving a persona updates the same setting as `/auth/comment-monitoring`; it
+does not create a separate channel interval. Older persona requests that omit
+the field preserve the existing interval.
+
+Example:
+
+```http
+GET /auth/comment-monitoring
+```
+
+```json
+{"enabled": true, "comment_fetch_interval_minutes": 5}
+```
+
+```http
+PUT /auth/comment-monitoring
+Content-Type: application/json
+```
+
+```json
+{"enabled": true, "comment_fetch_interval_minutes": 15}
+```
 
 ## AI comment reply drafts
 
@@ -93,12 +139,18 @@ The public contact form endpoint is `POST /api/contact.php`. Configure
 `CONTACT_EMAIL_TO`, and `RECAPTCHA_SECRET_KEY` on the backend. The request JSON
 must include `name`, `email`, `message`, and `recaptcha_token`; the CAPTCHA is
 verified server-side before the message is sent.
+On success, the response includes `email_status: "accepted_by_provider"`,
+`request_id`, and Resend's `provider_message_id` when available. Provider
+acceptance confirms the API accepted the email, not that it reached the inbox;
+use the provider message ID in Resend's Emails/Logs to inspect delivery.
+Backend logs use the request ID to correlate reCAPTCHA and provider results.
 
 Save a business profile and select videos to enable contextual AI replies.
 The background monitor automatically fetches comments and generates/posts
 replies for eligible comments on selected videos while the account is signed
 in. On startup, it processes the currently visible unreplied backlog and fetches
-every page of comments and replies on each scan. It polls every 5 minutes.
+every page of comments and replies on each scan. Its interval is the account's
+`comment_fetch_interval_minutes` preference (5 minutes by default).
 This requires the account's Google authorization to include YouTube posting
 access. The explicit “Generate & Post Replies” action remains available too.
 
@@ -160,3 +212,36 @@ and enforce one analytics row per selected video.
 Video-selection responses include the YouTube channel name for each video.
 Selected-video analytics also returns the stored channel name and each saved
 comment's video name.
+
+## Pinned-video analytics API
+
+The authenticated `PUT /analytics/pin` endpoint pins one of the user's already
+selected videos:
+
+```json
+{"channel_id": "YouTube channel ID", "video_id": "YouTube video ID"}
+```
+
+`GET /analytics/pin` returns the pin status. `PATCH /analytics/pin` accepts
+`{"enabled": false}` to turn the pin off without deleting its configuration;
+send `{"enabled": true}` to turn it back on. While disabled, the existing
+comments and analytics endpoints continue to work normally.
+
+Call `GET /analytics/pinned` while the pin is enabled to get the current
+channel name, subscriber count and total video count; the pinned video's title,
+views, likes and comment count; and top-level comments separated into
+`replied_comments` and `unanswered_comments`. This endpoint refreshes and saves
+up to 100 newest top-level comments and up to 50 replies per comment by default.
+The limits can be adjusted with `max_comments` (1-100) and `max_replies` (0-200)
+query parameters. Requests require the normal authenticated login and a
+connected YouTube account. The `pinned_video` table is created automatically
+at startup for existing databases.
+
+`GET /analytics/pinned` and its alias `GET /analytics/public-pinned` expose the
+same response without requiring an application login. They use the most
+recently updated enabled pin across all accounts and the owning account's
+stored Google credentials. Anyone who can reach these endpoints can read the
+pinned channel/video statistics and fetched comments; repeated requests can
+consume that account's YouTube API quota.
+Requests with multiple leading slashes, such as `//analytics/pinned`, are
+normalized to the standard endpoint path before routing.

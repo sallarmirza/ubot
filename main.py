@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings
+from core.path_normalization import NormalizeLeadingSlashesMiddleware
 from db_manager import db_manager                      # <- add
 
 from router.business_profile_router import router as business_profile_router
@@ -99,6 +100,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(NormalizeLeadingSlashesMiddleware)
 app.include_router(oauth_router, prefix="/auth")
 app.include_router(business_profile_router)
 app.include_router(ai_router)

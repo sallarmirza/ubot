@@ -31,9 +31,12 @@ from repositories.ai_repo import get_selected_videos_for_monitoring
 from repositories.auth_repository import (
     delete_google_connection,
     delete_user_account,
+    get_comment_monitoring_settings,
     set_comment_monitoring_enabled,
+    upsert_channels,
 )
 from repositories.retention_repository import prune_expired_data
+from router.google_oauth_router import channels as get_saved_channels
 from schema.oauth_schema import GoogleOAuthError
 from services import auth_service, google_oauth_service
 
@@ -135,6 +138,10 @@ class OAuthRetentionTests(unittest.TestCase):
             db.commit()
 
             self.assertEqual(get_selected_videos_for_monitoring(db), [])
+            self.assertEqual(
+                get_comment_monitoring_settings(db, user.user_id),
+                {"enabled": False, "comment_fetch_interval_minutes": 5},
+            )
 
             set_comment_monitoring_enabled(db, user.user_id, True)
             db.commit()
@@ -145,13 +152,28 @@ class OAuthRetentionTests(unittest.TestCase):
                         user.user_id,
                         f"channel-{user.user_id}",
                         f"video-{user.user_id}",
+                        5,
                     )
                 ],
+            )
+
+            set_comment_monitoring_enabled(db, user.user_id, True, 20)
+            db.commit()
+            self.assertEqual(
+                get_comment_monitoring_settings(db, user.user_id),
+                {"enabled": True, "comment_fetch_interval_minutes": 20},
+            )
+            self.assertEqual(
+                get_selected_videos_for_monitoring(db)[0][3], 20
             )
 
             set_comment_monitoring_enabled(db, user.user_id, False)
             db.commit()
             self.assertEqual(get_selected_videos_for_monitoring(db), [])
+            self.assertEqual(
+                get_comment_monitoring_settings(db, user.user_id),
+                {"enabled": False, "comment_fetch_interval_minutes": 20},
+            )
 
     def test_account_deletion_removes_only_the_requested_users_data(self) -> None:
         with self.session_factory() as db:
@@ -305,6 +327,95 @@ class OAuthRetentionTests(unittest.TestCase):
 
         client.post.assert_called_once()
         self.assertEqual(client.post.call_args.kwargs["data"], {"token": "expired-token"})
+
+    def test_channel_thumbnail_is_fetched_persisted_and_returned(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "items": [
+                {
+                    "id": "youtube-channel",
+                    "snippet": {
+                        "title": "Channel",
+                        "thumbnails": {
+                            "default": {"url": "https://example.test/default.jpg"},
+                            "high": {"url": "https://example.test/high.jpg"},
+                        },
+                    },
+                    "statistics": {
+                        "subscriberCount": "12",
+                        "viewCount": "345",
+                    },
+                }
+            ]
+        }
+        client = Mock()
+        client.get.return_value = response
+        with patch.object(
+            google_oauth_service, "get_sync_http_client", return_value=client
+        ):
+            channel_data = google_oauth_service.fetch_my_channels("access-token")
+
+        self.assertEqual(
+            channel_data[0]["channel_thumbnail_url"],
+            "https://example.test/high.jpg",
+        )
+        self.assertEqual(
+            client.get.call_args.kwargs["params"]["part"],
+            "snippet,statistics",
+        )
+
+        with self.session_factory() as db:
+            user = User()
+            db.add(user)
+            db.flush()
+            upsert_channels(db, user.user_id, channel_data)
+            db.commit()
+            db.refresh(user)
+
+            self.assertEqual(
+                user.youtube_channels[0].channel_thumbnail_url,
+                "https://example.test/high.jpg",
+            )
+            self.assertEqual(
+                get_saved_channels(user),
+                [
+                    {
+                        "youtube_channel_id": "youtube-channel",
+                        "channel_name": "Channel",
+                        "channel_subscribers": 12,
+                        "channel_views": 345,
+                        "channel_thumbnail_url": "https://example.test/high.jpg",
+                    }
+                ],
+            )
+
+    def test_channel_thumbnail_uses_available_lower_resolution(self) -> None:
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "items": [
+                {
+                    "id": "youtube-channel",
+                    "snippet": {
+                        "title": "Channel",
+                        "thumbnails": {
+                            "default": {"url": "https://example.test/default.jpg"}
+                        },
+                    },
+                    "statistics": {},
+                }
+            ]
+        }
+        client = Mock()
+        client.get.return_value = response
+        with patch.object(
+            google_oauth_service, "get_sync_http_client", return_value=client
+        ):
+            channel_data = google_oauth_service.fetch_my_channels("access-token")
+
+        self.assertEqual(
+            channel_data[0]["channel_thumbnail_url"],
+            "https://example.test/default.jpg",
+        )
 
     @staticmethod
     def _create_account_graph(db, google_subject: str):

@@ -4,11 +4,59 @@ from sqlalchemy.orm import Session
 from db_model import (
 	Analytics,
 	Comments,
+	PinnedVideo,
 	TargetChannel,
 	TargetVideo,
 	Videos,
 	YoutubeChannel,
 )
+
+
+def get_pinned_video(db: Session, user_id: int) -> PinnedVideo | None:
+	"""Return this user's saved pinned-video configuration."""
+	return db.get(PinnedVideo, user_id)
+
+
+def get_latest_enabled_pinned_video(db: Session) -> PinnedVideo | None:
+	"""Return the most recently configured active pin across all users."""
+	return (
+		db.query(PinnedVideo)
+		.filter(PinnedVideo.enabled.is_(True))
+		.order_by(PinnedVideo.updated_at.desc(), PinnedVideo.user_id.desc())
+		.first()
+	)
+
+
+def save_pinned_video(
+	db: Session, user_id: int, channel_id: str, video_id: str
+) -> PinnedVideo:
+	"""Save and enable a pin without changing the selected-video records."""
+	pinned_video = get_pinned_video(db, user_id)
+	if pinned_video is None:
+		pinned_video = PinnedVideo(
+			user_id=user_id,
+			youtube_channel_id=channel_id,
+			youtube_video_id=video_id,
+			enabled=True,
+		)
+		db.add(pinned_video)
+	else:
+		pinned_video.youtube_channel_id = channel_id
+		pinned_video.youtube_video_id = video_id
+		pinned_video.enabled = True
+	db.commit()
+	db.refresh(pinned_video)
+	return pinned_video
+
+
+def set_pinned_video_enabled(
+	db: Session, pinned_video: PinnedVideo, enabled: bool
+) -> PinnedVideo:
+	"""Toggle a pin while preserving its channel and video IDs."""
+	pinned_video.enabled = enabled
+	db.commit()
+	db.refresh(pinned_video)
+	return pinned_video
 
 
 def get_selected_videos(db: Session, user_id: int) -> list[TargetVideo]:

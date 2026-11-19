@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class BusinessProfileRequest(BaseModel):
@@ -9,3 +9,13 @@ class BusinessProfileRequest(BaseModel):
     services: str = Field(default="", max_length=800)
     brand_tone: str = Field(default="", max_length=50)
     ai_rules: str = Field(default="", max_length=300)
+    comment_fetch_interval_minutes: int | None = Field(
+        default=None, strict=True, ge=1, le=1440
+    )
+
+    @field_validator("comment_fetch_interval_minutes", mode="before")
+    @classmethod
+    def reject_null_interval(cls, value):
+        if value is None:
+            raise ValueError("comment_fetch_interval_minutes must be an integer")
+        return value

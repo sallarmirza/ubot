@@ -2,7 +2,7 @@ import secrets
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from core.config import settings
 from core.dependencies import get_current_user
 from core.security import clear_auth_cookie, create_access_token, set_auth_cookie
@@ -21,6 +21,16 @@ class CommentMonitoringSetting(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
+    comment_fetch_interval_minutes: int | None = Field(
+        default=None, strict=True, ge=1, le=1440
+    )
+
+    @field_validator("comment_fetch_interval_minutes", mode="before")
+    @classmethod
+    def reject_null_interval(cls, value):
+        if value is None:
+            raise ValueError("comment_fetch_interval_minutes must be an integer")
+        return value
 
 
 @router.get("/google/login")
@@ -99,6 +109,7 @@ def channels(user: User = Depends(get_current_user)):
             "channel_name": channel.channel_name,
             "channel_subscribers": channel.channel_subscribers,
             "channel_views": channel.channel_views,
+            "channel_thumbnail_url": channel.channel_thumbnail_url,
         }
         for channel in user.youtube_channels
     ]
@@ -109,9 +120,7 @@ def get_comment_monitoring(
     user: User = Depends(get_current_user),
 ):
     """Return the signed-in user's automatic comment monitoring setting."""
-    return {
-        "enabled": auth_repository.is_comment_monitoring_enabled(db, user.user_id)
-    }
+    return auth_repository.get_comment_monitoring_settings(db, user.user_id)
 
 
 @router.put("/comment-monitoring")
@@ -123,13 +132,16 @@ def update_comment_monitoring(
     """Enable or pause automatic comment fetching and replies."""
     try:
         auth_repository.set_comment_monitoring_enabled(
-            db, user.user_id, payload.enabled
+            db,
+            user.user_id,
+            payload.enabled,
+            payload.comment_fetch_interval_minutes,
         )
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return {"enabled": payload.enabled}
+    return auth_repository.get_comment_monitoring_settings(db, user.user_id)
 
 
 @router.post("/logout")

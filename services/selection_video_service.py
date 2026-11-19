@@ -216,6 +216,7 @@ def fetch_channel_statistics(
 				"channel_name": item.get("snippet", {}).get("title", ""),
 				"channel_subscribers": _count(statistics, "subscriberCount"),
 				"channel_views": _count(statistics, "viewCount"),
+				"channel_video_count": _count(statistics, "videoCount"),
 			}
 	return channels
 

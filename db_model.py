@@ -1,6 +1,6 @@
 # app/models.py
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text,
     UniqueConstraint, func
 )
 from sqlalchemy.orm import relationship
@@ -42,6 +42,10 @@ class UserOAuth(Base):
     __tablename__ = "user_oauth"
     __table_args__ = (
         Index("uq_user_oauth_google_subject", "google_subject", unique=True),
+        CheckConstraint(
+            "comment_fetch_interval_minutes BETWEEN 1 AND 1440",
+            name="ck_user_oauth_comment_fetch_interval_minutes",
+        ),
     )
 
     oauth_id = Column(Integer, primary_key=True)
@@ -52,6 +56,9 @@ class UserOAuth(Base):
     expires_at = Column(DateTime, nullable=True)
     scopes = Column(Text, nullable=True)
     comment_monitoring_enabled = Column(Boolean, nullable=False, default=False)
+    comment_fetch_interval_minutes = Column(
+        Integer, nullable=False, default=5, server_default="5"
+    )
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -67,6 +74,7 @@ class YoutubeChannel(Base):
     channel_name = Column(String(255), nullable=False)
     channel_subscribers = Column(Integer, nullable=False, default=0)
     channel_views = Column(Integer, nullable=False, default=0)
+    channel_thumbnail_url = Column(String(2048), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -161,6 +169,16 @@ class TargetVideo(Base):
     analytics = relationship(
         "Analytics", back_populates="target_video", cascade="all, delete-orphan"
     )
+
+
+class PinnedVideo(Base):
+    __tablename__ = "pinned_video"
+
+    user_id = Column(Integer, ForeignKey("users.user_id"), primary_key=True)
+    youtube_channel_id = Column(String(100), nullable=False)
+    youtube_video_id = Column(String(50), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class Comments(Base):

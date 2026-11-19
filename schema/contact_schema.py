@@ -1,4 +1,5 @@
 import re
+from typing import Literal
 
 from pydantic import (
 	AliasChoices,
@@ -66,3 +67,6 @@ class ContactRequest(BaseModel):
 
 class ContactResponse(BaseModel):
 	message: str
+	email_status: Literal["accepted_by_provider"]
+	request_id: str
+	provider_message_id: str | None = None

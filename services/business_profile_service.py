@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from db_model import BusinessSetup, TargetChannel, YoutubeChannel
+from repositories import auth_repository
 from schema.business_profile_schema import BusinessProfileRequest
 
 # Data model reminder (how the tables connect):
@@ -60,7 +61,11 @@ def _find_or_create_target(
     return target
 
 
-def _profile_data(channel: YoutubeChannel, profile: BusinessSetup | None) -> dict:
+def _profile_data(
+    channel: YoutubeChannel,
+    profile: BusinessSetup | None,
+    comment_fetch_interval_minutes: int,
+) -> dict:
     """Build a consistent response for saved and not-yet-saved profiles.
 
     The API always returns the same JSON shape. If the profile has not been
@@ -80,6 +85,7 @@ def _profile_data(channel: YoutubeChannel, profile: BusinessSetup | None) -> dic
         "services": profile.business_services if profile else "",
         "brand_tone": profile.tone if profile else "",
         "ai_rules": profile.business_rules if profile else "",
+        "comment_fetch_interval_minutes": comment_fetch_interval_minutes,
         # Placeholder: videos are not loaded by this function yet.
         "videos": [],
     }
@@ -130,10 +136,26 @@ def save_business_profile(
         profile.business_rules = payload.ai_rules
         profile.tone = payload.brand_tone
 
+    current_settings = auth_repository.get_comment_monitoring_settings(
+        db, user_id
+    )
+    auth_repository.set_comment_monitoring_enabled(
+        db,
+        user_id,
+        current_settings["enabled"],
+        payload.comment_fetch_interval_minutes,
+    )
+
     # Step 5: a single commit saves the target row (if new) and the profile
     # together, so we never end up with a half-saved state.
     db.commit()
-    return _profile_data(channel, profile)
+    return _profile_data(
+        channel,
+        profile,
+        auth_repository.get_comment_monitoring_settings(db, user_id)[
+            "comment_fetch_interval_minutes"
+        ],
+    )
 
 
 def get_business_profile(db: Session, user_id: int, channel_id: str) -> dict:
@@ -162,4 +184,10 @@ def get_business_profile(db: Session, user_id: int, channel_id: str) -> dict:
             .filter_by(user_id=user_id, target_channel_id=target.target_channel_id)
             .first()
         )
-    return _profile_data(channel, profile)  
+    return _profile_data(
+        channel,
+        profile,
+        auth_repository.get_comment_monitoring_settings(db, user_id)[
+            "comment_fetch_interval_minutes"
+        ],
+    )

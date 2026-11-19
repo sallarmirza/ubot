@@ -8,19 +8,53 @@ from repositories import ai_repo, auth_repository
 from services import ai_service, coments_fetching_service
 
 
-COMMENT_FETCH_INTERVAL_SECONDS = 5 * 60
+COMMENT_SCHEDULER_POLL_SECONDS = 60
 logger = logging.getLogger(__name__)
 
 
-def run_comment_monitoring_cycle() -> None:
+def _get_due_user_ids(
+	intervals_seconds: dict[int, int],
+	last_fetch_at: dict[int, float],
+	now: float,
+) -> set[int]:
+	return {
+		user_id
+		for user_id, interval_seconds in intervals_seconds.items()
+		if user_id not in last_fetch_at
+		or now - last_fetch_at[user_id] >= interval_seconds
+	}
+
+
+def _seconds_until_next_fetch(
+	intervals_seconds: dict[int, int],
+	last_fetch_at: dict[int, float],
+	now: float,
+) -> float:
+	return min(
+		(
+			max(0, interval_seconds - (now - last_fetch_at[user_id]))
+			for user_id, interval_seconds in intervals_seconds.items()
+			if user_id in last_fetch_at
+		),
+		default=COMMENT_SCHEDULER_POLL_SECONDS,
+	)
+
+
+def run_comment_monitoring_cycle(
+	due_user_ids: set[int] | None = None,
+	selected_videos: list[tuple[int, str, str, int]] | None = None,
+) -> None:
 	"""Fetch selected videos and automatically reply to eligible viewer comments."""
 	# Read the work list in a short session; don't hold a database connection
 	# while waiting on YouTube or the AI provider.
-	with db_manager.SessionLocal() as db:
-		selected_videos = ai_repo.get_selected_videos_for_monitoring(db)
+	if selected_videos is None:
+		with db_manager.SessionLocal() as db:
+			selected_videos = ai_repo.get_selected_videos_for_monitoring(db)
 
 	paused_user_ids = set()
-	for user_id, channel_id, video_id in selected_videos:
+	for user_id, channel_id, video_id, _interval_minutes in selected_videos:
+		if due_user_ids is not None and user_id not in due_user_ids:
+			continue
 		if user_id in paused_user_ids:
 			continue
 		try:
@@ -93,23 +127,58 @@ def run_comment_monitoring_cycle() -> None:
 
 async def run_comment_monitoring_loop() -> None:
 	"""Continuously scan all selected-video comments and reply to eligible ones."""
+	last_fetch_at: dict[int, float] = {}
+	loop = asyncio.get_running_loop()
 	while True:
-		cycle_started_at = asyncio.get_running_loop().time()
-		cycle = asyncio.create_task(
-			asyncio.to_thread(run_comment_monitoring_cycle)
-		)
 		try:
-			await asyncio.shield(cycle)
-		except asyncio.CancelledError:
-			try:
-				await cycle
-			except Exception:
-				logger.exception("Comment monitor cycle failed during shutdown")
-			raise
+			with db_manager.SessionLocal() as db:
+				selected_videos = ai_repo.get_selected_videos_for_monitoring(db)
 		except Exception:
-			logger.exception("Unexpected comment monitor cycle failure")
+			logger.exception("Could not load comment-monitoring schedule")
+			await asyncio.sleep(COMMENT_SCHEDULER_POLL_SECONDS)
+			continue
 
-		cycle_duration = asyncio.get_running_loop().time() - cycle_started_at
+		now = loop.time()
+		intervals_seconds = {
+			user_id: interval_minutes * 60
+			for user_id, _channel_id, _video_id, interval_minutes in selected_videos
+		}
+		active_user_ids = set(intervals_seconds)
+		last_fetch_at = {
+			user_id: last_fetch_at[user_id]
+			for user_id in active_user_ids
+			if user_id in last_fetch_at
+		}
+		due_user_ids = _get_due_user_ids(
+			intervals_seconds, last_fetch_at, now
+		)
+
+		if due_user_ids:
+			cycle = asyncio.create_task(
+				asyncio.to_thread(
+					run_comment_monitoring_cycle,
+					due_user_ids,
+					selected_videos,
+				)
+			)
+			try:
+				await asyncio.shield(cycle)
+			except asyncio.CancelledError:
+				try:
+					await cycle
+				except Exception:
+					logger.exception("Comment monitor cycle failed during shutdown")
+				raise
+			except Exception:
+				logger.exception("Unexpected comment monitor cycle failure")
+			finally:
+				completed_at = loop.time()
+				for user_id in due_user_ids:
+					last_fetch_at[user_id] = completed_at
+
+		next_due_seconds = _seconds_until_next_fetch(
+			intervals_seconds, last_fetch_at, loop.time()
+		)
 		await asyncio.sleep(
-			max(0, COMMENT_FETCH_INTERVAL_SECONDS - cycle_duration)
+			min(COMMENT_SCHEDULER_POLL_SECONDS, max(1, next_due_seconds))
 		)

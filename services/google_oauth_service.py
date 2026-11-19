@@ -116,12 +116,24 @@ def fetch_my_channels(access_token: str) -> list[dict]:
     channels = []
     for item in resp.json().get("items", []):
         stats = item.get("statistics", {})
+        snippet = item.get("snippet", {})
+        thumbnails = snippet.get("thumbnails", {})
+        thumbnail_url = next(
+            (
+                thumbnails[size].get("url")
+                for size in ("maxres", "standard", "high", "medium", "default")
+                if isinstance(thumbnails.get(size), dict)
+                and thumbnails[size].get("url")
+            ),
+            None,
+        )
         channels.append(
             {
                 "youtube_channel_id": item["id"],
-                "channel_name": item["snippet"]["title"],
+                "channel_name": snippet["title"],
                 "channel_subscribers": int(stats.get("subscriberCount", 0)),
                 "channel_views": int(stats.get("viewCount", 0)),
+                "channel_thumbnail_url": thumbnail_url,
             }
         )
     return channels
